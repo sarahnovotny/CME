@@ -936,41 +936,47 @@ def make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels):
     plt.close(fig)
     print("  Saved fig1_scatter.png")
 
-    # ── Figure 2: Cluster fragility comparison ──
+    # ── Figure 2: Risk cluster fragility (a) and funding gap (b) ──
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
-    # Panel a: Mean fragility by cluster
-    s = summary.sort_values("mean_fragility", ascending=True)
-    short_labels = [l.split(",")[0].strip() for l in s["label"]]
-    colors = [cmap(tid) for tid in s["topic_id"]]
+    n_rc = len(summary)
+    cmap_rc = plt.colormaps.get_cmap("tab10").resampled(max(n_rc, 1))
 
-    axes[0].barh(range(len(s)), s["mean_fragility"], color=colors)
-    axes[0].set_yticks(range(len(s)))
-    axes[0].set_yticklabels(short_labels, fontsize=8)
+    # Panel a: Mean fragility by risk cluster
+    s = summary.sort_values("mean_fragility", ascending=True)
+    short_labels_a = [str(l).split(",")[0].strip() for l in s["label"]]
+    colors_a = [cmap_rc(int(tid)) for tid in s["topic_id"]]
+
+    axes[0].barh(range(n_rc), s["mean_fragility"], color=colors_a)
+    axes[0].set_yticks(range(n_rc))
+    axes[0].set_yticklabels(short_labels_a, fontsize=9)
     axes[0].set_xlabel("Mean fragility score (min-max normalised, [0,1])")
-    axes[0].set_title("(a) Mean fragility by cluster")
-    axes[0].axvline(df["fragility"].mean(), color="red", linestyle="--",
-                    alpha=0.7, label=f"Overall mean (F̄={df['fragility'].mean():.3f})")
+    axes[0].set_title("(a) Mean fragility by risk cluster")
+    risk_mean_f = df[df["in_risk_universe"]]["fragility"].mean()
+    axes[0].axvline(risk_mean_f, color="red", linestyle="--",
+                    alpha=0.7, label=f"Risk-universe mean (F̄={risk_mean_f:.3f})")
     axes[0].legend(fontsize=8)
 
-    # Panel b: Risk universe share by cluster
-    s2 = summary.sort_values("risk_pct", ascending=True)
-    short_labels2 = [l.split(",")[0].strip() for l in s2["label"]]
-    colors2 = [cmap(tid) for tid in s2["topic_id"]]
+    # Panel b: Funding gap by risk cluster
+    gap_sorted = gap_df.sort_values("gap_meur", ascending=True)
+    short_labels_b = [str(l).split(",")[0].strip() for l in gap_sorted["label"]]
+    colors_b = [cmap_rc(int(tid)) for tid in gap_sorted["topic_id"]]
 
-    axes[1].barh(range(len(s2)), s2["risk_pct"], color=colors2)
-    axes[1].set_yticks(range(len(s2)))
-    axes[1].set_yticklabels(short_labels2, fontsize=8)
-    axes[1].set_xlabel("% of cluster in risk universe")
-    axes[1].set_title("(b) Risk concentration by cluster")
+    axes[1].barh(range(len(gap_sorted)), gap_sorted["gap_meur"], color=colors_b)
+    axes[1].set_yticks(range(len(gap_sorted)))
+    axes[1].set_yticklabels(short_labels_b, fontsize=9)
+    axes[1].set_xlabel("Funding gap (EUR million/year)")
+    axes[1].set_title("(b) Funding gap by risk cluster")
 
-    n_risk = int(df["in_risk_universe"].sum())
+    n_risk_total = int(df["in_risk_universe"].sum())
+    total_gap_meur = n_risk_total * FTES_PER_PACKAGE * EU_MEDIAN_DEV_SALARY / 1e6
     fig.text(0.5, -0.03,
-             f"N={len(df):,} load-bearing packages assigned to {N_TOPICS} NMF clusters. "
-             f"Risk universe = {n_risk} packages above the {RISK_PERCENTILE}th percentile "
-             f"on both criticality and fragility. Cluster labels are human-assigned "
-             f"after inspecting top NMF keywords and member packages; Topics 0 and 24 are "
-             f"residual clusters of generic-description packages (see PROJECT_OVERVIEW §11).",
+             f"N={n_risk_total} risk-universe packages assigned to {N_RISK_TOPICS} "
+             f"risk-only NMF clusters. "
+             f"Panel (a): mean fragility within each cluster. "
+             f"Panel (b): gross funding-gap lower bound (2 FTE × EUR 45k/pkg/yr); "
+             f"total = EUR {total_gap_meur:.1f}M. "
+             f"Cluster labels are human-assigned after inspecting NMF auto-keywords.",
              ha="center", fontsize=8, style="italic", wrap=True)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "fig2_clusters.png"),
