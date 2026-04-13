@@ -887,31 +887,31 @@ def bootstrap_analysis(df):
 
 # ── Stage 8: Figures ───────────────────────────────────────────────────
 
-def make_figures(df, summary, gap_df, boot_df, topic_labels):
+def make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels):
     """Generate all figures for the report."""
     print("\n" + "=" * 70)
     print("STAGE 8: Generating figures")
     print("=" * 70)
 
-    # ── Figure 1: Criticality vs Fragility scatter, coloured by topic ──
+    # ── Figure 1: C–F scatter — grey background, risk points by risk cluster ──
     fig, ax = plt.subplots(figsize=(10, 7))
-    topics = sorted(df["topic_id"].unique())
-    cmap = plt.colormaps.get_cmap("tab20b").resampled(N_TOPICS)
 
-    for tid in topics:
-        mask = (df["topic_id"] == tid) & (~df["in_risk_universe"])
-        ax.scatter(df.loc[mask, "criticality"], df.loc[mask, "fragility"],
-                   c=[cmap(tid)], alpha=0.15, s=8, label=None)
+    # Background: all 9,461 packages in grey (no cluster colouring)
+    ax.scatter(df["criticality"], df["fragility"],
+               c="lightgrey", alpha=0.12, s=6, linewidths=0, zorder=1)
 
-    # Overlay risk universe with larger markers
-    risk = df[df["in_risk_universe"]]
-    for tid in topics:
-        mask = risk["topic_id"] == tid
-        if mask.sum() > 0:
-            short_label = topic_labels[tid].split(",")[0].strip()
-            ax.scatter(risk.loc[mask, "criticality"], risk.loc[mask, "fragility"],
-                       c=[cmap(tid)], alpha=0.8, s=30, edgecolors="black",
-                       linewidths=0.5, label=f"{short_label} ({mask.sum()})")
+    # Risk universe: coloured by risk-only cluster
+    risk = df[df["in_risk_universe"]].copy()
+    n_risk_topics = int(risk["topic_id_risk"].dropna().nunique())
+    cmap_risk = plt.colormaps.get_cmap("tab10").resampled(max(n_risk_topics, 1))
+
+    for tid in sorted(risk["topic_id_risk"].dropna().unique()):
+        mask = risk["topic_id_risk"] == tid
+        short_label = str(risk_topic_labels[int(tid)]).split(",")[0].strip()
+        ax.scatter(risk.loc[mask, "criticality"], risk.loc[mask, "fragility"],
+                   c=[cmap_risk(int(tid))], alpha=0.85, s=35,
+                   edgecolors="black", linewidths=0.5, zorder=2,
+                   label=f"{short_label} ({mask.sum()})")
 
     c_thresh = df["criticality"].quantile(RISK_PERCENTILE / 100)
     f_thresh = df["fragility"].quantile(RISK_PERCENTILE / 100)
@@ -919,17 +919,17 @@ def make_figures(df, summary, gap_df, boot_df, topic_labels):
     ax.axhline(f_thresh, color="grey", linestyle="--", alpha=0.5)
     ax.set_xlabel("Criticality score (min-max normalised, [0,1])", fontsize=11)
     ax.set_ylabel("Fragility score (min-max normalised, [0,1])", fontsize=11)
-    ax.set_title("Criticality vs Fragility by Functional Cluster", fontsize=13)
-    n_risk = int(df["in_risk_universe"].sum())
+    ax.set_title("Criticality vs Fragility — Risk Universe by Risk Cluster", fontsize=13)
+    n_risk_count = int(df["in_risk_universe"].sum())
     fig.text(0.5, -0.02,
              f"N={len(df):,} load-bearing packages (≥100 dependent projects). "
-             f"Dashed grey lines mark the {RISK_PERCENTILE}th-percentile thresholds "
-             f"(C≥{c_thresh:.3f}, F≥{f_thresh:.3f}). "
-             f"Risk universe = {n_risk} packages above both thresholds, shown with "
-             f"larger markers and black edges. Background points faded for legibility.",
+             f"Grey background = all {len(df):,} packages. "
+             f"Coloured points = {n_risk_count} risk-universe packages above both "
+             f"{RISK_PERCENTILE}th-percentile thresholds (C≥{c_thresh:.3f}, F≥{f_thresh:.3f}), "
+             f"coloured by risk-only NMF cluster (k={N_RISK_TOPICS}).",
              ha="center", fontsize=8, style="italic", wrap=True)
-    ax.legend(title="Risk universe by cluster", fontsize=7, title_fontsize=8,
-              loc="lower left", ncol=3)
+    ax.legend(title="Risk cluster (risk-only NMF)", fontsize=8, title_fontsize=9,
+              loc="lower left", ncol=2)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "fig1_scatter.png"),
                 dpi=150, bbox_inches="tight")
