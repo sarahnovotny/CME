@@ -469,9 +469,11 @@ def topic_model_risk(df):
 
     # k sweep for manual inspection
     print("\n  k sweep (reconstruction error + top keywords):")
+    sweep_errors = []
     for k in range(5, 9):
         nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
         W_k = nmf_k.fit_transform(tfidf_matrix)
+        sweep_errors.append(nmf_k.reconstruction_err_)
         print(f"\n  k={k}  err={nmf_k.reconstruction_err_:.4f}")
         for ti in range(k):
             top_w = [feature_names[i] for i in nmf_k.components_[ti].argsort()[-4:][::-1]]
@@ -479,15 +481,8 @@ def topic_model_risk(df):
             print(f"    t{ti}: {', '.join(top_w):<40} ({n} pkgs)")
 
     # Save risk k-sweep figure
-    k_range_risk = list(range(5, 9))
-    risk_errors = []
-    for k in k_range_risk:
-        nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
-        nmf_k.fit_transform(tfidf_matrix)
-        risk_errors.append(nmf_k.reconstruction_err_)
-
     fig_kb, ax_kb = plt.subplots(figsize=(6, 3))
-    ax_kb.plot(k_range_risk, risk_errors, "o-", color="steelblue", linewidth=2, markersize=6)
+    ax_kb.plot(list(range(5, 9)), sweep_errors, "o-", color="steelblue", linewidth=2, markersize=6)
     ax_kb.axvline(N_RISK_TOPICS, color="crimson", linestyle="--", alpha=0.7,
                   label=f"Selected k={N_RISK_TOPICS}")
     ax_kb.set_xlabel("Number of topics (k)")
@@ -528,7 +523,7 @@ def topic_model_risk(df):
             risk_topic_labels[tid] = human_label
 
     # Assign topic columns — NaN for non-risk rows
-    df["topic_id_risk"] = np.nan
+    df["topic_id_risk"] = pd.array([pd.NA] * len(df), dtype="Int64")
     df["topic_label_risk"] = pd.Series(np.nan, index=df.index, dtype=object)
     risk_indices = risk_df.index
     df.loc[risk_indices, "topic_id_risk"] = risk_topic_ids
