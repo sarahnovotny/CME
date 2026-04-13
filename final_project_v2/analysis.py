@@ -577,42 +577,38 @@ def analyse_clusters(df, risk_topic_labels):
 
 # ── Stage 4b: Inspect the largest / most fragile cluster ───────────────
 
-def inspect_top_cluster(df, summary, topic_labels):
-    """Print the most notable packages in the highest-fragility cluster."""
+def inspect_top_cluster(df, summary, risk_topic_labels):
+    """Print the most notable packages in the highest-fragility risk cluster."""
     print("\n" + "=" * 70)
-    print("STAGE 4b: Inspecting the most fragile cluster")
+    print("STAGE 4b: Inspecting the most fragile risk cluster")
     print("=" * 70)
 
-    top_tid = summary.iloc[0]["topic_id"]
+    top_tid = int(summary.iloc[0]["topic_id"])
     top_label = summary.iloc[0]["label"]
-    cluster = df[df["topic_id"] == top_tid].copy()
-    risk_cluster = cluster[cluster["in_risk_universe"]]
+    cluster = df[(df["in_risk_universe"]) & (df["topic_id_risk"] == top_tid)].copy()
 
-    print(f"\n  Topic {int(top_tid)} [{top_label}]")
-    print(f"  {len(cluster)} packages, {len(risk_cluster)} in risk universe")
+    print(f"\n  Risk Topic {top_tid} [{top_label}]")
+    print(f"  {len(cluster)} packages (all in risk universe by construction)")
     print(f"  Mean fragility: {cluster['fragility'].mean():.3f}, "
           f"bus factor=1: {(cluster['contributors'] < 2).mean()*100:.1f}%")
 
-    # Top packages by criticality within the cluster
     print(f"\n  Top 15 packages in this cluster by criticality:")
-    top = cluster.nlargest(15, "criticality")[
+    top = cluster.nlargest(min(15, len(cluster)), "criticality")[
         ["Name", "Platform", "criticality", "fragility",
-         "contributors", "dep_pkg_count", "in_risk_universe"]]
+         "contributors", "dep_pkg_count"]]
     for _, row in top.iterrows():
-        risk_flag = " *** RISK" if row["in_risk_universe"] else ""
         print(f"    {row['Name']:<40} [{row['Platform']:<10}] "
               f"C={row['criticality']:.3f} F={row['fragility']:.3f} "
               f"contrib={int(row['contributors']):>4} "
-              f"deps={int(row['dep_pkg_count']):>6}{risk_flag}")
+              f"deps={int(row['dep_pkg_count']):>6}")
 
-    # Also show notable risk-universe packages across all clusters
-    print(f"\n  Notable risk-universe packages (top 15 by criticality across all clusters):")
+    print(f"\n  Top 15 risk-universe packages by criticality (all clusters):")
     all_risk = df[df["in_risk_universe"]].nlargest(15, "criticality")
     for _, row in all_risk.iterrows():
-        short_topic = topic_labels[row["topic_id"]].split(",")[0].strip()
+        risk_label = str(row["topic_label_risk"]).split(",")[0].strip()
         print(f"    {row['Name']:<40} [{row['Platform']:<10}] "
               f"C={row['criticality']:.3f} F={row['fragility']:.3f} "
-              f"topic={short_topic}")
+              f"cluster={risk_label}")
 
 
 # ── Stage 4c: LASSO validation of fragility weights ───────────────────
@@ -723,8 +719,8 @@ def threshold_sensitivity(df, topic_labels):
         # Top 5 clusters by risk concentration at this threshold
         cluster_risk = []
         for tid in sorted(topic_labels.keys()):
-            cluster = df[df["topic_id"] == tid]
-            n_risk = len(risk[risk["topic_id"] == tid])
+            cluster = df[df["topic_id_corpus"] == tid]
+            n_risk = len(risk[risk["topic_id_corpus"] == tid])
             cluster_risk.append({
                 "topic_id": tid,
                 "label": topic_labels[tid].split(",")[0].strip(),
@@ -757,6 +753,10 @@ def threshold_sensitivity(df, topic_labels):
     else:
         print(f"\n  UNSTABLE: Top cluster varies across thresholds: {list(top_clusters)}")
 
+    print(f"\n  NOTE: Cluster labels above are full-corpus NMF (k={N_TOPICS}). "
+          f"Risk-only clusters (Stage 3c) are not re-fit per threshold — "
+          f"doing so would produce incomparable labels across thresholds.")
+
     return results_df
 
 
@@ -786,14 +786,13 @@ def fetch_eurostat_gva():
 # ── Stage 6: Funding gap by cluster ────────────────────────────────────
 
 def compute_funding_gap(df, summary, total_gva):
-    """Compute the maintenance funding gap per topic cluster."""
+    """Compute the maintenance funding gap per risk-only topic cluster."""
     print("\n" + "=" * 70)
-    print("STAGE 6: Funding gap by functional cluster")
+    print("STAGE 6: Funding gap by risk-only functional cluster")
     print("=" * 70)
 
     cost_per_pkg = FTES_PER_PACKAGE * EU_MEDIAN_DEV_SALARY
-    risk = df[df["in_risk_universe"]].copy()
-    total_risk = len(risk)
+    total_risk = int(df["in_risk_universe"].sum())
     total_gap = total_risk * cost_per_pkg
 
     print(f"  Risk universe: {total_risk} packages")
@@ -803,14 +802,13 @@ def compute_funding_gap(df, summary, total_gva):
     print(f"  EU software-sector GVA: EUR {total_gva:,.0f}M")
     print(f"  Gap as fraction of GVA: {total_gap / (total_gva * 1e6) * 100:.4f}%")
 
-    # Per-cluster breakdown
     gap_rows = []
-    for tid in sorted(summary["topic_id"]):
-        n_risk = len(risk[risk["topic_id"] == tid])
+    for _, row in summary.iterrows():
+        n_risk = int(row["n_packages"])
         cluster_gap = n_risk * cost_per_pkg
         gap_rows.append({
-            "topic_id": tid,
-            "label": summary[summary["topic_id"] == tid]["label"].iloc[0],
+            "topic_id": row["topic_id"],
+            "label": row["label"],
             "n_risk": n_risk,
             "gap_eur": cluster_gap,
             "gap_meur": cluster_gap / 1e6,
@@ -818,11 +816,10 @@ def compute_funding_gap(df, summary, total_gva):
 
     gap_df = pd.DataFrame(gap_rows).sort_values("gap_eur", ascending=False)
 
-    print("\n  Funding gap by cluster:")
+    print("\n  Funding gap by risk cluster:")
     for _, row in gap_df.iterrows():
-        if row["n_risk"] > 0:
-            print(f"    Topic {row['topic_id']} [{row['label']}]: "
-                  f"{row['n_risk']} pkgs, EUR {row['gap_meur']:.1f}M")
+        print(f"    Risk Topic {int(row['topic_id'])} [{row['label']}]: "
+              f"{row['n_risk']} pkgs, EUR {row['gap_meur']:.1f}M")
 
     return gap_df, total_gap
 
