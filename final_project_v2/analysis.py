@@ -605,7 +605,8 @@ def inspect_top_cluster(df, summary, risk_topic_labels):
     print(f"\n  Top 15 risk-universe packages by criticality (all clusters):")
     all_risk = df[df["in_risk_universe"]].nlargest(15, "criticality")
     for _, row in all_risk.iterrows():
-        risk_label = str(row["topic_label_risk"]).split(",")[0].strip()
+        risk_label = (str(row["topic_label_risk"]).split(",")[0].strip()
+                      if pd.notna(row["topic_label_risk"]) else "unassigned")
         print(f"    {row['Name']:<40} [{row['Platform']:<10}] "
               f"C={row['criticality']:.3f} F={row['fragility']:.3f} "
               f"cluster={risk_label}")
@@ -820,6 +821,12 @@ def compute_funding_gap(df, summary, total_gva):
     for _, row in gap_df.iterrows():
         print(f"    Risk Topic {int(row['topic_id'])} [{row['label']}]: "
               f"{row['n_risk']} pkgs, EUR {row['gap_meur']:.1f}M")
+
+    assert sum(r["n_risk"] for r in gap_rows) == total_risk, (
+        f"Per-cluster package count ({sum(r['n_risk'] for r in gap_rows)}) "
+        f"does not match risk-universe size ({total_risk}). "
+        f"Check for unassigned topic_id_risk in risk universe."
+    )
 
     return gap_df, total_gap
 
