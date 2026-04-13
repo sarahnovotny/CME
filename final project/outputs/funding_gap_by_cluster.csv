@@ -1,0 +1,26 @@
+topic_id,label,n_risk,gap_eur,gap_meur
+24,General-purpose infrastructure (residual),20,1800000,1.8
+13,Command-line infrastructure,19,1710000,1.71
+0,Generic/legacy infrastructure (residual),16,1440000,1.44
+14,Task runners (Gulp/Rake),15,1350000,1.35
+20,Server infrastructure,15,1350000,1.35
+18,HTTP & networking,15,1350000,1.35
+17,Testing & mocking,15,1350000,1.35
+5,Cloud & API clients,14,1260000,1.26
+23,Documentation & formatting,14,1260000,1.26
+16,Parsers & code transformation,13,1170000,1.17
+4,Build tooling (bundlers),10,900000,0.9
+15,Web & mobile frameworks,10,900000,0.9
+3,Application frameworks (.NET/PHP),10,900000,0.9
+9,JS transpilation (Babel),9,810000,0.81
+7,Data serialisation & validation,8,720000,0.72
+10,PHP/Symfony ecosystem,7,630000,0.63
+21,Compilation & code transforms,7,630000,0.63
+22,Vue ecosystem,7,630000,0.63
+12,CSS & styling,7,630000,0.63
+11,CLI tools & Ember addons,5,450000,0.45
+2,JS utility libraries,4,360000,0.36
+8,Test runners,3,270000,0.27
+19,Angular ecosystem,2,180000,0.18
+1,React ecosystem,1,90000,0.09
+6,Code linting,1,90000,0.09
