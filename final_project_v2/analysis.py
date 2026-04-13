@@ -106,12 +106,12 @@ HUMAN_TOPIC_LABELS = {
 # Placeholder values — overwrite after inspecting the first-run sweep output
 # and the auto-generated keywords printed by topic_model_risk().
 HUMAN_RISK_TOPIC_LABELS = {
-    0: "Risk cluster 0",
-    1: "Risk cluster 1",
-    2: "Risk cluster 2",
-    3: "Risk cluster 3",
-    4: "Risk cluster 4",
-    5: "Risk cluster 5",
+    0: "Gulp / task-runner build tooling",
+    1: "HTTP & web protocol utilities",
+    2: "Apache / Java Commons infrastructure",
+    3: "Karma & JS test runners",
+    4: "Microsoft / .NET ecosystem (Entity Framework, logging)",
+    5: "Cross-platform polyfills & environment utilities",
 }
 
 # Domain-specific stop words: terms that describe what a package IS (artifact type,
@@ -434,6 +434,111 @@ def topic_model(df, tfidf_matrix=None, tfidf=None):
               f"consider increasing k or inspecting that topic.")
 
     return df, topic_labels
+
+
+# ── Stage 3c: Risk-only topic modelling ───────────────────────────────
+
+def topic_model_risk(df):
+    """Run NMF topic modelling on risk-universe package descriptions only.
+
+    TF-IDF is re-fitted on the risk set so vocabulary reflects what
+    distinguishes at-risk packages from each other, not from the full corpus.
+    A k sweep (5..8) is printed for manual inspection; N_RISK_TOPICS is used
+    for the final fit. Update HUMAN_RISK_TOPIC_LABELS after inspecting the
+    printed auto-keywords.
+    """
+    print("\n" + "=" * 70)
+    print(f"STAGE 3c: Risk-only topic modelling (NMF k sweep 5–8, selected k={N_RISK_TOPICS})")
+    print("=" * 70)
+
+    risk_df = df[df["in_risk_universe"]].copy()
+    print(f"  Risk universe: {len(risk_df)} packages")
+
+    texts = _clean_descriptions(risk_df["Description"].fillna("").astype(str))
+    stop_words = _build_stop_words()
+
+    tfidf = TfidfVectorizer(
+        max_features=2000,
+        stop_words=stop_words,
+        min_df=2, max_df=0.8,
+        token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z]+\b",
+    )
+    tfidf_matrix = tfidf.fit_transform(texts)
+    feature_names = tfidf.get_feature_names_out()
+    print(f"  TF-IDF matrix: {tfidf_matrix.shape[0]} docs × {tfidf_matrix.shape[1]} features")
+
+    # k sweep for manual inspection
+    print("\n  k sweep (reconstruction error + top keywords):")
+    for k in range(5, 9):
+        nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
+        W_k = nmf_k.fit_transform(tfidf_matrix)
+        print(f"\n  k={k}  err={nmf_k.reconstruction_err_:.4f}")
+        for ti in range(k):
+            top_w = [feature_names[i] for i in nmf_k.components_[ti].argsort()[-4:][::-1]]
+            n = (W_k.argmax(axis=1) == ti).sum()
+            print(f"    t{ti}: {', '.join(top_w):<40} ({n} pkgs)")
+
+    # Save risk k-sweep figure
+    k_range_risk = list(range(5, 9))
+    risk_errors = []
+    for k in k_range_risk:
+        nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
+        nmf_k.fit_transform(tfidf_matrix)
+        risk_errors.append(nmf_k.reconstruction_err_)
+
+    fig_kb, ax_kb = plt.subplots(figsize=(6, 3))
+    ax_kb.plot(k_range_risk, risk_errors, "o-", color="steelblue", linewidth=2, markersize=6)
+    ax_kb.axvline(N_RISK_TOPICS, color="crimson", linestyle="--", alpha=0.7,
+                  label=f"Selected k={N_RISK_TOPICS}")
+    ax_kb.set_xlabel("Number of topics (k)")
+    ax_kb.set_ylabel("Reconstruction error (Frobenius norm)")
+    ax_kb.set_title(f"Risk-universe NMF k selection (N={len(risk_df)} packages)")
+    ax_kb.legend()
+    ax_kb.grid(True, alpha=0.3)
+    fig_kb.tight_layout()
+    fig_kb.savefig(os.path.join(OUTPUT_DIR, "fig0b_risk_topic_selection.png"),
+                   dpi=150, bbox_inches="tight")
+    plt.close(fig_kb)
+    print(f"  Saved fig0b_risk_topic_selection.png")
+
+    # Fit selected k
+    print(f"\n  Fitting selected k={N_RISK_TOPICS}:")
+    nmf = NMF(n_components=N_RISK_TOPICS, random_state=RANDOM_SEED, max_iter=500)
+    W = nmf.fit_transform(tfidf_matrix)
+    H = nmf.components_
+
+    print(f"  Reconstruction error: {nmf.reconstruction_err_:.4f}")
+    print(f"  Iterations: {nmf.n_iter_}")
+
+    risk_topic_ids = W.argmax(axis=1)
+
+    risk_topic_labels = {}
+    print(f"\n  Discovered {N_RISK_TOPICS} risk topics:")
+    for topic_idx in range(N_RISK_TOPICS):
+        top_word_idx = H[topic_idx].argsort()[-8:][::-1]
+        top_words = [feature_names[i] for i in top_word_idx]
+        label = ", ".join(top_words[:4])
+        risk_topic_labels[topic_idx] = label
+        n_pkgs = (risk_topic_ids == topic_idx).sum()
+        print(f"    Risk Topic {topic_idx}: [{label}] — {n_pkgs} pkgs")
+
+    # Apply human-readable labels (overrides auto-labels)
+    for tid, human_label in HUMAN_RISK_TOPIC_LABELS.items():
+        if tid in risk_topic_labels:
+            risk_topic_labels[tid] = human_label
+
+    # Assign topic columns — NaN for non-risk rows
+    df["topic_id_risk"] = np.nan
+    df["topic_label_risk"] = pd.Series(np.nan, index=df.index, dtype=object)
+    risk_indices = risk_df.index
+    df.loc[risk_indices, "topic_id_risk"] = risk_topic_ids
+    df.loc[risk_indices, "topic_label_risk"] = [risk_topic_labels[t] for t in risk_topic_ids]
+
+    print(f"\n  Risk topic assignment complete.")
+    print(f"  Inspect auto-keywords above and update HUMAN_RISK_TOPIC_LABELS "
+          f"at the top of analysis.py, then re-run.")
+
+    return df, risk_topic_labels
 
 
 # ── Stage 4: Fragility analysis by cluster ─────────────────────────────
