@@ -38,11 +38,11 @@ This document records every operational decision that deviates from or extends w
 
 ---
 
-## 5. Topic Count: k=25
+## 5. Topic Counts: k=25 (full corpus) and k=5 (risk-only)
 
 **Proposal:** Did not specify k.
 
-**Process:** We tested k=5, 10, 15, 18, 20, 22, 25 through a combination of reconstruction error sweeps and manual inspection of topic quality.
+**Full-corpus NMF (k=25):** Tested k=5, 10, 15, 18, 20, 22, 25 through reconstruction error sweeps and manual topic quality inspection.
 
 | k | Largest cluster | Problem |
 |---|----------------|---------|
@@ -51,7 +51,21 @@ This document records every operational decision that deviates from or extends w
 | 20 | 898 (9.5%) | Catch-all breaking up, topics becoming interpretable |
 | 25 | 927 (9.8%) | No cluster >10%, topics are distinct functional categories |
 
-**Decision:** k=25. The reconstruction error curve shows no sharp elbow (monotonically decreasing from 92.1 at k=5 to 87.4 at k=25). Selection was based on topic quality: at k=25 the topics resolve into recognisable functional categories (HTTP/networking, JSON/serialisation, CSS/styling, cloud API clients, test runners, etc.) and the AWS/SDK cluster (Topic 5: "client, google, apis, rest") emerges as a distinct group with meaningful fragility characteristics.
+**Decision (corpus):** k=25. Reconstruction error curve is monotonically decreasing (92.1 at k=5 to 86.6 at k=25, no elbow). Selection rests on topic quality: at k=25 topics resolve into recognisable functional categories (HTTP/networking, JSON/serialisation, CSS/styling, cloud API clients, test runners, etc.). Full-corpus labels are used only for threshold sensitivity analysis (§12).
+
+**Risk-only NMF (k=5):** After identifying the 247-package risk universe, TF-IDF and NMF are re-fitted on those 247 packages only (vocabulary constrained to 268 features). Sweep k=3–8 again shows no reconstruction error elbow (14.2 at k=3 to 13.6 at k=8). k=5 was chosen by interpretability: it preserves the Microsoft/.NET vs HTTP/web distinction while keeping all clusters ≥ 14 packages. At k=4, Microsoft/.NET and HTTP/web are merged into a single 157-package cluster that obscures meaningfully different fragility profiles. At k=6+, the "Cross-platform polyfills & environment utilities" split emerges, but Karma shrinks to 6 packages — borderline for stable statistics.
+
+**Risk-only cluster results (k=5, sorted by mean fragility):**
+
+| Cluster | N | F̄ | % bus-factor-1 | Gap (EUR M) |
+|---------|---|-----|----------------|-------------|
+| Apache / Java Commons legacy infrastructure | 27 | 0.721 | 74.1% | 2.4 |
+| Microsoft / .NET + npm ecosystem | 127 | 0.606 | 51.2% | 11.4 |
+| HTTP & web protocol utilities | 35 | 0.563 | 42.9% | 3.1 |
+| Gulp / JS build & task tooling | 44 | 0.543 | 38.6% | 4.0 |
+| Karma / JS test runners | 14 | 0.486 | 28.6% | 1.3 |
+
+No residual cluster appears: constraining the vocabulary to the risk set produces descriptions informative enough to assign every package to a coherent functional category.
 
 ---
 
@@ -118,29 +132,15 @@ This document records every operational decision that deviates from or extends w
 
 ---
 
-## 11. Topic 0 Composition: A Residual Cluster, Not a TypeScript Cluster
+## 11. Risk-Only NMF: No Residual Clusters
 
-**Auto-generated NMF keywords:** `typescript, redux, chai, cookie` — these are the four highest-weight TF-IDF terms in the topic-term matrix, and on first reading they suggest a coherent JavaScript-ecosystem cluster. They are misleading.
+**Problem with corpus-level clustering:** Running NMF on all 9,461 packages and then mapping the 247 risk-universe packages into those corpus-shaped clusters produces residual categories. Corpus Topic 0 (`typescript, redux, chai, cookie` auto-keywords — labelled "Generic/legacy infrastructure (residual)") was the most fragile cluster, but its membership was heterogeneous: 927 packages from every ecosystem, dominated by packages with descriptions too short and generic for NMF to assign meaningfully when vocabulary is shaped by 9,461 documents. The high-fragility tail within Topic 0 was overwhelmingly legacy Maven packages (`log4j:log4j`, `commons-lang:commons-lang`, etc.), but those packages were invisible as a cluster in the corpus-level analysis.
 
-**Human-readable label assigned:** `"Generic/legacy infrastructure (residual)"`. This is the label used in the report, the summary tables, all figures, and `outputs/cluster_summary.csv`. The auto-generated keyword list is preserved in the notebook output for transparency but is never used as a finding label.
+**Fix:** TF-IDF and NMF re-fitted on the 247 risk-universe packages only. With a vocabulary of 268 features (vs 1,755 in the full corpus), every package description provides enough signal for assignment. No residual cluster appears in the k=5 solution.
 
-**Why the relabel:** NMF assigned 927 packages to Topic 0 — the second-largest cluster — but the membership is heterogeneous in a specific way. The cluster is dominated by *packages with uninformative descriptions* across every ecosystem in the dataset:
+**Apache / Java Commons cluster (the previously-buried finding):** The risk-only NMF surfaces the legacy Java/Maven packages as their own cluster: 27 packages, F̄=0.721, 74.1% single-maintainer. This includes `log4j:log4j` (F=0.903, C=0.625, 4,437 dependents), `commons-lang:commons-lang` (F=0.909), `commons-logging:commons-logging` (F=0.892), `commons-io:commons-io` (F=0.860). These are the packages that corpus-level NMF was burying in the residual.
 
-| Platform | Topic 0 packages |
-|---|---|
-| NPM | 740 |
-| Maven | 111 |
-| Packagist | 36 |
-| Pypi | 15 |
-| Rubygems | 14 |
-| NuGet | 9 |
-| Cargo | 2 |
-
-NPM is the modal platform by count, but the **high-fragility tail is overwhelmingly Maven**. Of the top-15 most fragile packages in Topic 0, 14 are legacy Java/Maven infrastructure: `aopalliance` (F=0.93), `javax.persistence:persistence-api` (F=0.92), `jdom` (F=0.92), `plexus-utils` (F=0.93), `concurrent:concurrent` (F=0.93), `xstream` (F=0.92), `easymock` (F=0.92) — all single-maintainer, deeply embedded enterprise Java dependencies. These are genuinely fragile runtime infrastructure that NMF could not assign to a more specific topic because their package descriptions are short and generic.
-
-**On the `@types/*` concern:** An initial worry was that the 314 `@types/*` DefinitelyTyped packages in Topic 0 were inflating fragility. The opposite is true: their mean fragility (F=0.225) is below the cluster mean because they inherit the DefinitelyTyped monorepo's ~1,100 contributors. They pull Topic 0's mean *down*. No filtering is needed.
-
-**How the finding is framed in the report:** The most fragile cluster is "generic/legacy infrastructure" — a residual category whose risk-bearing members are predominantly legacy Java/Maven dependencies with uninformative descriptions, not the TypeScript ecosystem the auto-keywords would suggest. The lesson for methodology is that NMF top-keyword labels can mis-frame a residual cluster, and any finding built on them must be cross-checked against the actual high-weight package list. Topic 24 ("General-purpose infrastructure (residual)") is treated symmetrically.
+**Full-corpus labels retained for:** threshold sensitivity analysis only (§12). The corpus cluster structure provides a fixed, stable baseline for cross-threshold comparisons; re-fitting risk-only NMF at each threshold would produce incomparable labels. See `outputs/cluster_summary.csv` for corpus-level descriptive context.
 
 ---
 
@@ -148,7 +148,9 @@ NPM is the modal platform by count, but the **high-fragility tail is overwhelmin
 
 **Proposal:** States sensitivity analysis will be performed.
 
-**Finding:** The most fragile cluster *by mean fragility* at the 75th percentile is Topic 0, "Generic/legacy infrastructure (residual)" (F=0.38) — see §11 for why this label, not the auto-generated `typescript/redux/chai` keywords. But the cluster with the highest *risk concentration* (share of cluster members in the risk universe) is a different one and varies across thresholds: "Command-line infrastructure" at the 60th, "Task runners (Gulp/Rake)" at the 75th, "Cloud & API clients" at the 90th. This is an honest finding — the functional category that "looks worst" depends on which question you ask (mean fragility vs. risk concentration) and which percentile threshold you set. The report discusses this as a limitation rather than hiding it.
+**Finding:** The cluster with the highest *risk concentration* (share of cluster members in the risk universe) varies across thresholds: "Command-line infrastructure" at the 60th, "Task runners (Gulp/Rake)" at the 75th, "Cloud & API clients" at the 90th. This is an honest finding — the functional category that "looks worst" depends on which question you ask and which threshold is set. The report discusses this as a limitation.
+
+**Note on cluster labels:** Threshold sensitivity uses full-corpus NMF labels (k=25), not risk-only NMF. Reason: re-fitting risk-only NMF at each threshold would produce incomparable labels across thresholds (different k, different vocabulary, different random NMF initialisation). The corpus cluster structure is fixed and stable, so concentration statistics are comparable. Printed output includes the note: *"Cluster labels here are full-corpus NMF (k=25); risk-only clusters not re-fit per threshold."*
 
 ---
 
@@ -177,7 +179,7 @@ NPM is the modal platform by count, but the **high-fragility tail is overwhelmin
 
 **What the figure is good for:**
 - Order-of-magnitude reasoning ("tens of millions of euros, not hundreds or billions").
-- Per-cluster comparison (Topic 0 holds €1.4M of the gap, Topic 14 holds €1.4M, etc. — see `outputs/funding_gap_by_cluster.csv`).
+- Per-cluster comparison (see `outputs/funding_gap_by_cluster.csv`): Microsoft / .NET + npm EUR 11.4M, Gulp / build tooling EUR 4.0M, HTTP & web utilities EUR 3.1M, Apache / Java Commons EUR 2.4M, Karma / test runners EUR 1.3M.
 - Comparison against EU policy spend on OSS — Sovereign Tech Fund's 2023 budget was EUR 11.5M, NLnet's annual disbursement is in the low millions; €22M is the same order of magnitude as existing public funding combined, suggesting the unmet need is roughly equal to the entire public-funding ecosystem.
 
 **What the figure is *not* good for:** any precise euro claim, any benefit-cost ratio against avoided incident cost, any single-package funding recommendation.
@@ -193,10 +195,12 @@ NPM is the modal platform by count, but the **high-fragility tail is overwhelmin
 | Load-bearing packages (>=100 dependents) | 9,461 |
 | Risk universe (75th pctile on C and F) | 247 |
 | C-F correlation (Pearson r) | -0.31 |
-| NMF topics (k) | 25 |
-| Largest cluster | 927 (9.8%) |
-| Most fragile cluster (mean F) | Topic 0: Generic/legacy infrastructure — residual; high-fragility tail is legacy Java/Maven (F=0.38, 27% bus-factor=1) |
-| Highest risk concentration (75th pctile) | Topic 14: Task runners (Gulp/Rake) |
+| Full-corpus NMF topics (k) | 25 (used for threshold sensitivity only) |
+| Largest full-corpus cluster | 927 packages (9.8%) |
+| Risk-only NMF topics (k) | 5 (primary findings) |
+| Most fragile risk cluster (mean F) | Apache / Java Commons legacy infrastructure — 27 pkgs, F̄=0.721, 74% bus-factor=1 |
+| Largest risk cluster | Microsoft / .NET + npm ecosystem — 127 pkgs, EUR 11.4M gap |
+| Highest risk concentration (75th pctile, corpus labels) | Topic 14: Task runners (Gulp/Rake) |
 | EU J62/J63 GVA (2022) | EUR 467B |
 | Total funding gap (gross lower bound) | ≥ EUR 22.2M [95% CI: 19.7, 24.8 — sampling uncertainty only; see §14] |
 | Bootstrap replicates | 1,000 |

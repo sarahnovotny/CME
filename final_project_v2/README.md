@@ -5,7 +5,7 @@ ECP77594 — Computational Methods in Economics — Final Project — Sarah Novo
 ## Repository layout
 
 ```
-final project/
+final_project_v2/
 ├── README.md                  this file
 ├── requirements.txt           pinned Python dependencies
 ├── proposal.md                original project proposal (+ change log)
@@ -21,10 +21,15 @@ final project/
 │   ├── packages_loadbearing.csv      9,461 rows × 12 cols
 │   └── eurostat_gva_2022.csv         31 countries × 2 cols
 └── outputs/                   results (built by analysis.py / .ipynb)
-    ├── packages_scored.csv           9,461 rows × 15 cols
-    ├── cluster_summary.csv           per-cluster fragility / risk table
-    ├── funding_gap_by_cluster.csv    per-cluster funding gap
-    └── fig0_topic_selection.png … fig3_bootstrap.png
+    ├── packages_scored.csv           9,461 rows × 18 cols (incl. topic_id_risk, topic_label_risk)
+    ├── cluster_summary.csv           full-corpus NMF (k=25) cluster table — descriptive context
+    ├── risk_cluster_summary.csv      risk-only NMF (k=5) cluster table — primary findings
+    ├── funding_gap_by_cluster.csv    per-cluster funding gap (risk-only clusters)
+    ├── fig0_topic_selection.png      full-corpus k sweep
+    ├── fig0b_risk_topic_selection.png  risk-only k sweep (k=3–8)
+    ├── fig1_scatter.png              C–F scatter, risk points coloured by risk cluster
+    ├── fig2_clusters.png             fragility ranking + funding gap by risk cluster
+    └── fig3_bootstrap.png            bootstrap distributions
 ```
 
 ## Reproducing the results
@@ -53,14 +58,17 @@ jupyter nbconvert --to notebook --execute analysis.ipynb --inplace
 
 Random seed `RANDOM_SEED = 42` is set on the NMF, the LASSO CV split, and the bootstrap RNG, so every run produces byte-identical numbers given the same input CSVs.
 
-## Headline numbers (from the version submitted)
+## Headline numbers
 
 | Metric | Value |
 |---|---|
 | Load-bearing packages (≥ 100 dependent projects) | 9,461 |
 | Risk universe (≥ 75th percentile on both criticality and fragility) | 247 |
 | Criticality–fragility correlation (Pearson r) | −0.31 |
-| Most fragile cluster | Topic 0 — Generic/legacy infrastructure (residual) |
+| Topic model — full corpus | k=25 NMF on all 9,461 packages (corpus context, threshold sensitivity) |
+| Topic model — risk universe | k=5 NMF on 247 risk packages only (primary findings) |
+| Most fragile risk cluster | Apache / Java Commons legacy infrastructure (27 pkgs, F̄=0.721, 74% bus-factor-1) |
+| Largest risk cluster | Microsoft / .NET + npm ecosystem (127 pkgs, EUR 11.4M gap) |
 | EU J62/J63 Gross Value Added (2022, sum of member states) | EUR 466,568 M |
 | Maintenance funding gap (gross lower bound; 2 FTE × EUR 45 K per risk-universe package) | ≥ EUR 22.2 M [95 % CI: 19.7, 24.8 — sampling uncertainty only] |
 | Bootstrap replicates | 1,000 |
