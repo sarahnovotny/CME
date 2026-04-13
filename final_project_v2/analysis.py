@@ -538,23 +538,21 @@ def topic_model_risk(df):
 
 # ── Stage 4: Fragility analysis by cluster ─────────────────────────────
 
-def analyse_clusters(df, topic_labels):
-    """Analyse fragility and criticality variation across topic clusters."""
+def analyse_clusters(df, risk_topic_labels):
+    """Analyse fragility and criticality variation across risk-only topic clusters."""
     print("\n" + "=" * 70)
-    print("STAGE 4: Fragility analysis by functional cluster")
+    print("STAGE 4: Fragility analysis by risk-only functional cluster")
     print("=" * 70)
 
+    risk_df = df[df["in_risk_universe"]].copy()
+
     summary_rows = []
-    for tid in sorted(topic_labels.keys()):
-        mask = df["topic_id"] == tid
-        cluster = df[mask]
-        risk = cluster[cluster["in_risk_universe"]]
+    for tid in sorted(risk_topic_labels.keys()):
+        cluster = risk_df[risk_df["topic_id_risk"] == tid]
         summary_rows.append({
             "topic_id": tid,
-            "label": topic_labels[tid],
+            "label": risk_topic_labels[tid],
             "n_packages": len(cluster),
-            "n_risk": len(risk),
-            "risk_pct": len(risk) / len(cluster) * 100 if len(cluster) > 0 else 0,
             "mean_fragility": cluster["fragility"].mean(),
             "median_fragility": cluster["fragility"].median(),
             "mean_criticality": cluster["criticality"].mean(),
@@ -565,13 +563,12 @@ def analyse_clusters(df, topic_labels):
     summary = pd.DataFrame(summary_rows)
     summary = summary.sort_values("mean_fragility", ascending=False)
 
-    print("\n  Cluster summary (sorted by mean fragility):\n")
-    print(f"  {'Topic':<6} {'Label':<35} {'Pkgs':>5} {'Risk':>5} "
-          f"{'Risk%':>6} {'F̄':>6} {'C̄':>6} {'Bus1%':>6}")
-    print("  " + "-" * 95)
+    print("\n  Risk cluster summary (sorted by mean fragility):\n")
+    print(f"  {'Topic':<6} {'Label':<40} {'Pkgs':>5} "
+          f"{'F̄':>6} {'C̄':>6} {'Bus1%':>6}")
+    print("  " + "-" * 80)
     for _, row in summary.iterrows():
-        print(f"  {row['topic_id']:<6} {row['label']:<35} {row['n_packages']:>5} "
-              f"{row['n_risk']:>5} {row['risk_pct']:>5.1f}% "
+        print(f"  {int(row['topic_id']):<6} {row['label']:<40} {row['n_packages']:>5} "
               f"{row['mean_fragility']:>6.3f} {row['mean_criticality']:>6.3f} "
               f"{row['pct_bus_factor_1']:>5.1f}%")
 
