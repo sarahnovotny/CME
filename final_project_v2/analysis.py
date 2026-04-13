@@ -67,7 +67,7 @@ W_DEP_REPO = 0.35
 
 # Topic modelling
 N_TOPICS = 25
-N_RISK_TOPICS = 6         # topics for risk-only NMF; adjust after inspecting sweep output
+N_RISK_TOPICS = 5         # topics for risk-only NMF; k=5 chosen by interpretability — no elbow in reconstruction error at N=247; splits MS/.NET from HTTP/web utilities while keeping all clusters ≥14 packages
 N_BOOTSTRAP = 1000
 RANDOM_SEED = 42
 
@@ -106,12 +106,11 @@ HUMAN_TOPIC_LABELS = {
 # Placeholder values — overwrite after inspecting the first-run sweep output
 # and the auto-generated keywords printed by topic_model_risk().
 HUMAN_RISK_TOPIC_LABELS = {
-    0: "Gulp / task-runner build tooling",
+    0: "Gulp / JS build & task tooling",
     1: "HTTP & web protocol utilities",
-    2: "Apache / Java Commons infrastructure",
-    3: "Karma & JS test runners",
-    4: "Microsoft / .NET ecosystem (Entity Framework, logging)",
-    5: "Cross-platform polyfills & environment utilities",
+    2: "Apache / Java Commons legacy infrastructure",
+    3: "Karma / JS test runners",
+    4: "Microsoft / .NET + npm ecosystem",
 }
 
 # Domain-specific stop words: terms that describe what a package IS (artifact type,
@@ -448,7 +447,7 @@ def topic_model_risk(df):
     printed auto-keywords.
     """
     print("\n" + "=" * 70)
-    print(f"STAGE 3c: Risk-only topic modelling (NMF k sweep 5–8, selected k={N_RISK_TOPICS})")
+    print(f"STAGE 3c: Risk-only topic modelling (NMF k sweep 3–8, selected k={N_RISK_TOPICS})")
     print("=" * 70)
 
     risk_df = df[df["in_risk_universe"]].copy()
@@ -470,7 +469,7 @@ def topic_model_risk(df):
     # k sweep for manual inspection
     print("\n  k sweep (reconstruction error + top keywords):")
     sweep_errors = []
-    for k in range(5, 9):
+    for k in range(3, 9):
         nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
         W_k = nmf_k.fit_transform(tfidf_matrix)
         sweep_errors.append(nmf_k.reconstruction_err_)
@@ -482,7 +481,7 @@ def topic_model_risk(df):
 
     # Save risk k-sweep figure
     fig_kb, ax_kb = plt.subplots(figsize=(6, 3))
-    ax_kb.plot(list(range(5, 9)), sweep_errors, "o-", color="steelblue", linewidth=2, markersize=6)
+    ax_kb.plot(list(range(3, 9)), sweep_errors, "o-", color="steelblue", linewidth=2, markersize=6)
     ax_kb.axvline(N_RISK_TOPICS, color="crimson", linestyle="--", alpha=0.7,
                   label=f"Selected k={N_RISK_TOPICS}")
     ax_kb.set_xlabel("Number of topics (k)")
