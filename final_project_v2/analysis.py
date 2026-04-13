@@ -923,7 +923,7 @@ def make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels):
     n_risk_count = int(df["in_risk_universe"].sum())
     fig.text(0.5, -0.02,
              f"N={len(df):,} load-bearing packages (≥100 dependent projects). "
-             f"Grey background = all {len(df):,} packages. "
+             f"Grey background = all {len(df):,} packages (no cluster colouring). "
              f"Coloured points = {n_risk_count} risk-universe packages above both "
              f"{RISK_PERCENTILE}th-percentile thresholds (C≥{c_thresh:.3f}, F≥{f_thresh:.3f}), "
              f"coloured by risk-only NMF cluster (k={N_RISK_TOPICS}).",
@@ -1032,7 +1032,8 @@ def save_outputs(df, summary, gap_df):
         "dep_pkg_count", "dep_repo_count", "contributors",
         "open_issues", "stars", "days_since_release",
         "criticality", "fragility", "in_risk_universe",
-        "topic_id", "topic_label",
+        "topic_id_corpus", "topic_label_corpus",
+        "topic_id_risk", "topic_label_risk",
     ]
     out_path = os.path.join(OUTPUT_DIR, "packages_scored.csv")
     df[out_cols].to_csv(out_path, index=False)
@@ -1042,6 +1043,11 @@ def save_outputs(df, summary, gap_df):
     sum_path = os.path.join(OUTPUT_DIR, "cluster_summary.csv")
     summary.to_csv(sum_path, index=False)
     print(f"  Saved {sum_path}")
+
+    # Risk cluster summary (primary findings)
+    risk_sum_path = os.path.join(OUTPUT_DIR, "risk_cluster_summary.csv")
+    summary.to_csv(risk_sum_path, index=False)
+    print(f"  Saved {risk_sum_path}")
 
     # Funding gap
     gap_path = os.path.join(OUTPUT_DIR, "funding_gap_by_cluster.csv")
@@ -1057,14 +1063,15 @@ def main():
     check_cf_correlation(df)
     tfidf_matrix, tfidf = select_topic_count(df)
     df, topic_labels = topic_model(df, tfidf_matrix, tfidf)
-    summary = analyse_clusters(df, topic_labels)
-    inspect_top_cluster(df, summary, topic_labels)
+    df, risk_topic_labels = topic_model_risk(df)
+    summary = analyse_clusters(df, risk_topic_labels)
+    inspect_top_cluster(df, summary, risk_topic_labels)
     lasso_coefs = lasso_validation(df)
     threshold_results = threshold_sensitivity(df, topic_labels)
     gva, total_gva = fetch_eurostat_gva()
     gap_df, total_gap = compute_funding_gap(df, summary, total_gva)
     boot_df = bootstrap_analysis(df)
-    make_figures(df, summary, gap_df, boot_df, topic_labels)
+    make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels)
     save_outputs(df, summary, gap_df)
 
     print("\n" + "=" * 70)

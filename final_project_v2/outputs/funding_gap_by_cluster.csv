@@ -1,26 +1,7 @@
-topic_id,label,n_risk,gap_meur
-24,General-purpose infrastructure (residual),20,1.8
-13,Command-line infrastructure,19,1.71
-0,Generic/legacy infrastructure (residual),16,1.44
-14,Task runners (Gulp/Rake),15,1.35
-20,Server infrastructure,15,1.35
-18,HTTP & networking,15,1.35
-17,Testing & mocking,15,1.35
-5,Cloud & API clients,14,1.26
-23,Documentation & formatting,14,1.26
-16,Parsers & code transformation,13,1.17
-4,Build tooling (bundlers),10,0.9
-15,Web & mobile frameworks,10,0.9
-3,Application frameworks (.NET/PHP),10,0.9
-9,JS transpilation (Babel),9,0.81
-7,Data serialisation & validation,8,0.72
-10,PHP/Symfony ecosystem,7,0.63
-21,Compilation & code transforms,7,0.63
-22,Vue ecosystem,7,0.63
-12,CSS & styling,7,0.63
-11,CLI tools & Ember addons,5,0.45
-2,JS utility libraries,4,0.36
-8,Test runners,3,0.27
-19,Angular ecosystem,2,0.18
-1,React ecosystem,1,0.09
-6,Code linting,1,0.09
+topic_id,label,n_risk,gap_eur,gap_meur
+4,"Microsoft / .NET ecosystem (Entity Framework, logging)",82,7380000,7.38
+5,Cross-platform polyfills & environment utilities,55,4950000,4.95
+0,Gulp / task-runner build tooling,40,3600000,3.6
+1,HTTP & web protocol utilities,32,2880000,2.88
+2,Apache / Java Commons infrastructure,26,2340000,2.34
+3,Karma & JS test runners,12,1080000,1.08
