@@ -67,6 +67,7 @@ W_DEP_REPO = 0.35
 
 # Topic modelling
 N_TOPICS = 25
+N_RISK_TOPICS = 5         # topics for risk-only NMF; k=5 chosen by interpretability — no elbow in reconstruction error at N=247; splits MS/.NET from HTTP/web utilities while keeping all clusters ≥14 packages
 N_BOOTSTRAP = 1000
 RANDOM_SEED = 42
 
@@ -99,6 +100,17 @@ HUMAN_TOPIC_LABELS = {
     22: "Vue ecosystem",
     23: "Documentation & formatting",
     24: "General-purpose infrastructure (residual)",
+}
+
+# Human-readable labels for the risk-only NMF clusters.
+# Placeholder values — overwrite after inspecting the first-run sweep output
+# and the auto-generated keywords printed by topic_model_risk().
+HUMAN_RISK_TOPIC_LABELS = {
+    0: "Gulp / JS build & task tooling",
+    1: "HTTP & web protocol utilities",
+    2: "Apache / Java Commons legacy infrastructure",
+    3: "Karma / JS test runners",
+    4: "Microsoft / .NET + npm ecosystem",
 }
 
 # Domain-specific stop words: terms that describe what a package IS (artifact type,
@@ -383,8 +395,8 @@ def topic_model(df, tfidf_matrix=None, tfidf=None):
     print(f"  Iterations: {nmf.n_iter_}")
 
     # Assign each package to its dominant topic
-    df["topic_id"] = W.argmax(axis=1)
-    df["topic_weight"] = W.max(axis=1)
+    df["topic_id_corpus"] = W.argmax(axis=1)
+    df["topic_weight_corpus"] = W.max(axis=1)
 
     # Label topics by top words
     topic_labels = {}
@@ -394,8 +406,8 @@ def topic_model(df, tfidf_matrix=None, tfidf=None):
         top_words = [feature_names[i] for i in top_word_idx]
         label = ", ".join(top_words[:4])
         topic_labels[topic_idx] = label
-        n_pkgs = (df["topic_id"] == topic_idx).sum()
-        n_risk = ((df["topic_id"] == topic_idx) & df["in_risk_universe"]).sum()
+        n_pkgs = (df["topic_id_corpus"] == topic_idx).sum()
+        n_risk = ((df["topic_id_corpus"] == topic_idx) & df["in_risk_universe"]).sum()
         print(f"    Topic {topic_idx}: [{label}] — {n_pkgs} pkgs, {n_risk} in risk universe")
 
     # Apply human-readable labels (kept as a separate mapping from auto-labels).
@@ -405,15 +417,15 @@ def topic_model(df, tfidf_matrix=None, tfidf=None):
         if tid in topic_labels:
             topic_labels[tid] = human_label
 
-    df["topic_label"] = df["topic_id"].map(topic_labels)
+    df["topic_label_corpus"] = df["topic_id_corpus"].map(topic_labels)
 
     print(f"\n  Human-readable labels applied:")
     for tid in sorted(topic_labels.keys()):
-        n = (df["topic_id"] == tid).sum()
+        n = (df["topic_id_corpus"] == tid).sum()
         print(f"    T{tid:2d}: {topic_labels[tid]:<45} ({n} pkgs)")
 
     # Check largest cluster size
-    largest = df["topic_id"].value_counts().iloc[0]
+    largest = df["topic_id_corpus"].value_counts().iloc[0]
     largest_pct = largest / len(df) * 100
     print(f"\n  Largest cluster: {largest} packages ({largest_pct:.1f}%)")
     if largest_pct > 20:
@@ -423,25 +435,123 @@ def topic_model(df, tfidf_matrix=None, tfidf=None):
     return df, topic_labels
 
 
-# ── Stage 4: Fragility analysis by cluster ─────────────────────────────
+# ── Stage 3c: Risk-only topic modelling ───────────────────────────────
 
-def analyse_clusters(df, topic_labels):
-    """Analyse fragility and criticality variation across topic clusters."""
+def topic_model_risk(df):
+    """Run NMF topic modelling on risk-universe package descriptions only.
+
+    TF-IDF is re-fitted on the risk set so vocabulary reflects what
+    distinguishes at-risk packages from each other, not from the full corpus.
+    A k sweep (5..8) is printed for manual inspection; N_RISK_TOPICS is used
+    for the final fit. Update HUMAN_RISK_TOPIC_LABELS after inspecting the
+    printed auto-keywords.
+    """
     print("\n" + "=" * 70)
-    print("STAGE 4: Fragility analysis by functional cluster")
+    print(f"STAGE 3c: Risk-only topic modelling (NMF k sweep 3–8, selected k={N_RISK_TOPICS})")
     print("=" * 70)
 
+    risk_df = df[df["in_risk_universe"]].copy()
+    print(f"  Risk universe: {len(risk_df)} packages")
+
+    texts = _clean_descriptions(risk_df["Description"].fillna("").astype(str))
+    stop_words = _build_stop_words()
+
+    tfidf = TfidfVectorizer(
+        max_features=2000,
+        stop_words=stop_words,
+        min_df=2, max_df=0.8,
+        token_pattern=r"(?u)\b[a-zA-Z][a-zA-Z]+\b",
+    )
+    tfidf_matrix = tfidf.fit_transform(texts)
+    feature_names = tfidf.get_feature_names_out()
+    print(f"  TF-IDF matrix: {tfidf_matrix.shape[0]} docs × {tfidf_matrix.shape[1]} features")
+
+    # k sweep for manual inspection
+    print("\n  k sweep (reconstruction error + top keywords):")
+    sweep_errors = []
+    for k in range(3, 9):
+        nmf_k = NMF(n_components=k, random_state=RANDOM_SEED, max_iter=500)
+        W_k = nmf_k.fit_transform(tfidf_matrix)
+        sweep_errors.append(nmf_k.reconstruction_err_)
+        print(f"\n  k={k}  err={nmf_k.reconstruction_err_:.4f}")
+        for ti in range(k):
+            top_w = [feature_names[i] for i in nmf_k.components_[ti].argsort()[-4:][::-1]]
+            n = (W_k.argmax(axis=1) == ti).sum()
+            print(f"    t{ti}: {', '.join(top_w):<40} ({n} pkgs)")
+
+    # Save risk k-sweep figure
+    fig_kb, ax_kb = plt.subplots(figsize=(6, 3))
+    ax_kb.plot(list(range(3, 9)), sweep_errors, "o-", color="steelblue", linewidth=2, markersize=6)
+    ax_kb.axvline(N_RISK_TOPICS, color="crimson", linestyle="--", alpha=0.7,
+                  label=f"Selected k={N_RISK_TOPICS}")
+    ax_kb.set_xlabel("Number of topics (k)")
+    ax_kb.set_ylabel("Reconstruction error (Frobenius norm)")
+    ax_kb.set_title(f"Risk-universe NMF k selection (N={len(risk_df)} packages)")
+    ax_kb.legend()
+    ax_kb.grid(True, alpha=0.3)
+    fig_kb.tight_layout()
+    fig_kb.savefig(os.path.join(OUTPUT_DIR, "fig0b_risk_topic_selection.png"),
+                   dpi=150, bbox_inches="tight")
+    plt.close(fig_kb)
+    print(f"  Saved fig0b_risk_topic_selection.png")
+
+    # Fit selected k
+    print(f"\n  Fitting selected k={N_RISK_TOPICS}:")
+    nmf = NMF(n_components=N_RISK_TOPICS, random_state=RANDOM_SEED, max_iter=500)
+    W = nmf.fit_transform(tfidf_matrix)
+    H = nmf.components_
+
+    print(f"  Reconstruction error: {nmf.reconstruction_err_:.4f}")
+    print(f"  Iterations: {nmf.n_iter_}")
+
+    risk_topic_ids = W.argmax(axis=1)
+
+    risk_topic_labels = {}
+    print(f"\n  Discovered {N_RISK_TOPICS} risk topics:")
+    for topic_idx in range(N_RISK_TOPICS):
+        top_word_idx = H[topic_idx].argsort()[-8:][::-1]
+        top_words = [feature_names[i] for i in top_word_idx]
+        label = ", ".join(top_words[:4])
+        risk_topic_labels[topic_idx] = label
+        n_pkgs = (risk_topic_ids == topic_idx).sum()
+        print(f"    Risk Topic {topic_idx}: [{label}] — {n_pkgs} pkgs")
+
+    # Apply human-readable labels (overrides auto-labels)
+    for tid, human_label in HUMAN_RISK_TOPIC_LABELS.items():
+        if tid in risk_topic_labels:
+            risk_topic_labels[tid] = human_label
+
+    # Assign topic columns — NaN for non-risk rows
+    df["topic_id_risk"] = pd.array([pd.NA] * len(df), dtype="Int64")
+    df["topic_label_risk"] = pd.Series(np.nan, index=df.index, dtype=object)
+    risk_indices = risk_df.index
+    df.loc[risk_indices, "topic_id_risk"] = risk_topic_ids
+    df.loc[risk_indices, "topic_label_risk"] = [risk_topic_labels[t] for t in risk_topic_ids]
+
+    print(f"\n  Risk topic assignment complete.")
+    print(f"  Inspect auto-keywords above and update HUMAN_RISK_TOPIC_LABELS "
+          f"at the top of analysis.py, then re-run.")
+
+    return df, risk_topic_labels
+
+
+# ── Stage 4: Fragility analysis by cluster ─────────────────────────────
+
+def analyse_clusters(df, risk_topic_labels):
+    """Analyse fragility and criticality variation across risk-only topic clusters."""
+    print("\n" + "=" * 70)
+    print("STAGE 4: Fragility analysis by risk-only functional cluster")
+    print("=" * 70)
+
+    risk_df = df[df["in_risk_universe"]].copy()
+
     summary_rows = []
-    for tid in sorted(topic_labels.keys()):
-        mask = df["topic_id"] == tid
-        cluster = df[mask]
-        risk = cluster[cluster["in_risk_universe"]]
+    for tid in sorted(risk_topic_labels.keys()):
+        cluster = risk_df[risk_df["topic_id_risk"] == tid]
         summary_rows.append({
             "topic_id": tid,
-            "label": topic_labels[tid],
+            "label": risk_topic_labels[tid],
             "n_packages": len(cluster),
-            "n_risk": len(risk),
-            "risk_pct": len(risk) / len(cluster) * 100 if len(cluster) > 0 else 0,
             "mean_fragility": cluster["fragility"].mean(),
             "median_fragility": cluster["fragility"].median(),
             "mean_criticality": cluster["criticality"].mean(),
@@ -452,13 +562,12 @@ def analyse_clusters(df, topic_labels):
     summary = pd.DataFrame(summary_rows)
     summary = summary.sort_values("mean_fragility", ascending=False)
 
-    print("\n  Cluster summary (sorted by mean fragility):\n")
-    print(f"  {'Topic':<6} {'Label':<35} {'Pkgs':>5} {'Risk':>5} "
-          f"{'Risk%':>6} {'F̄':>6} {'C̄':>6} {'Bus1%':>6}")
-    print("  " + "-" * 95)
+    print("\n  Risk cluster summary (sorted by mean fragility):\n")
+    print(f"  {'Topic':<6} {'Label':<40} {'Pkgs':>5} "
+          f"{'F̄':>6} {'C̄':>6} {'Bus1%':>6}")
+    print("  " + "-" * 80)
     for _, row in summary.iterrows():
-        print(f"  {row['topic_id']:<6} {row['label']:<35} {row['n_packages']:>5} "
-              f"{row['n_risk']:>5} {row['risk_pct']:>5.1f}% "
+        print(f"  {int(row['topic_id']):<6} {row['label']:<40} {row['n_packages']:>5} "
               f"{row['mean_fragility']:>6.3f} {row['mean_criticality']:>6.3f} "
               f"{row['pct_bus_factor_1']:>5.1f}%")
 
@@ -467,42 +576,39 @@ def analyse_clusters(df, topic_labels):
 
 # ── Stage 4b: Inspect the largest / most fragile cluster ───────────────
 
-def inspect_top_cluster(df, summary, topic_labels):
-    """Print the most notable packages in the highest-fragility cluster."""
+def inspect_top_cluster(df, summary, risk_topic_labels):
+    """Print the most notable packages in the highest-fragility risk cluster."""
     print("\n" + "=" * 70)
-    print("STAGE 4b: Inspecting the most fragile cluster")
+    print("STAGE 4b: Inspecting the most fragile risk cluster")
     print("=" * 70)
 
-    top_tid = summary.iloc[0]["topic_id"]
+    top_tid = int(summary.iloc[0]["topic_id"])
     top_label = summary.iloc[0]["label"]
-    cluster = df[df["topic_id"] == top_tid].copy()
-    risk_cluster = cluster[cluster["in_risk_universe"]]
+    cluster = df[(df["in_risk_universe"]) & (df["topic_id_risk"] == top_tid)].copy()
 
-    print(f"\n  Topic {int(top_tid)} [{top_label}]")
-    print(f"  {len(cluster)} packages, {len(risk_cluster)} in risk universe")
+    print(f"\n  Risk Topic {top_tid} [{top_label}]")
+    print(f"  {len(cluster)} packages (all in risk universe by construction)")
     print(f"  Mean fragility: {cluster['fragility'].mean():.3f}, "
           f"bus factor=1: {(cluster['contributors'] < 2).mean()*100:.1f}%")
 
-    # Top packages by criticality within the cluster
     print(f"\n  Top 15 packages in this cluster by criticality:")
-    top = cluster.nlargest(15, "criticality")[
+    top = cluster.nlargest(min(15, len(cluster)), "criticality")[
         ["Name", "Platform", "criticality", "fragility",
-         "contributors", "dep_pkg_count", "in_risk_universe"]]
+         "contributors", "dep_pkg_count"]]
     for _, row in top.iterrows():
-        risk_flag = " *** RISK" if row["in_risk_universe"] else ""
         print(f"    {row['Name']:<40} [{row['Platform']:<10}] "
               f"C={row['criticality']:.3f} F={row['fragility']:.3f} "
               f"contrib={int(row['contributors']):>4} "
-              f"deps={int(row['dep_pkg_count']):>6}{risk_flag}")
+              f"deps={int(row['dep_pkg_count']):>6}")
 
-    # Also show notable risk-universe packages across all clusters
-    print(f"\n  Notable risk-universe packages (top 15 by criticality across all clusters):")
+    print(f"\n  Top 15 risk-universe packages by criticality (all clusters):")
     all_risk = df[df["in_risk_universe"]].nlargest(15, "criticality")
     for _, row in all_risk.iterrows():
-        short_topic = topic_labels[row["topic_id"]].split(",")[0].strip()
+        risk_label = (str(row["topic_label_risk"]).split(",")[0].strip()
+                      if pd.notna(row["topic_label_risk"]) else "unassigned")
         print(f"    {row['Name']:<40} [{row['Platform']:<10}] "
               f"C={row['criticality']:.3f} F={row['fragility']:.3f} "
-              f"topic={short_topic}")
+              f"cluster={risk_label}")
 
 
 # ── Stage 4c: LASSO validation of fragility weights ───────────────────
@@ -613,8 +719,8 @@ def threshold_sensitivity(df, topic_labels):
         # Top 5 clusters by risk concentration at this threshold
         cluster_risk = []
         for tid in sorted(topic_labels.keys()):
-            cluster = df[df["topic_id"] == tid]
-            n_risk = len(risk[risk["topic_id"] == tid])
+            cluster = df[df["topic_id_corpus"] == tid]
+            n_risk = len(risk[risk["topic_id_corpus"] == tid])
             cluster_risk.append({
                 "topic_id": tid,
                 "label": topic_labels[tid].split(",")[0].strip(),
@@ -647,6 +753,10 @@ def threshold_sensitivity(df, topic_labels):
     else:
         print(f"\n  UNSTABLE: Top cluster varies across thresholds: {list(top_clusters)}")
 
+    print(f"\n  NOTE: Cluster labels above are full-corpus NMF (k={N_TOPICS}). "
+          f"Risk-only clusters (Stage 3c) are not re-fit per threshold — "
+          f"doing so would produce incomparable labels across thresholds.")
+
     return results_df
 
 
@@ -676,14 +786,13 @@ def fetch_eurostat_gva():
 # ── Stage 6: Funding gap by cluster ────────────────────────────────────
 
 def compute_funding_gap(df, summary, total_gva):
-    """Compute the maintenance funding gap per topic cluster."""
+    """Compute the maintenance funding gap per risk-only topic cluster."""
     print("\n" + "=" * 70)
-    print("STAGE 6: Funding gap by functional cluster")
+    print("STAGE 6: Funding gap by risk-only functional cluster")
     print("=" * 70)
 
     cost_per_pkg = FTES_PER_PACKAGE * EU_MEDIAN_DEV_SALARY
-    risk = df[df["in_risk_universe"]].copy()
-    total_risk = len(risk)
+    total_risk = int(df["in_risk_universe"].sum())
     total_gap = total_risk * cost_per_pkg
 
     print(f"  Risk universe: {total_risk} packages")
@@ -693,14 +802,13 @@ def compute_funding_gap(df, summary, total_gva):
     print(f"  EU software-sector GVA: EUR {total_gva:,.0f}M")
     print(f"  Gap as fraction of GVA: {total_gap / (total_gva * 1e6) * 100:.4f}%")
 
-    # Per-cluster breakdown
     gap_rows = []
-    for tid in sorted(summary["topic_id"]):
-        n_risk = len(risk[risk["topic_id"] == tid])
+    for _, row in summary.iterrows():
+        n_risk = int(row["n_packages"])
         cluster_gap = n_risk * cost_per_pkg
         gap_rows.append({
-            "topic_id": tid,
-            "label": summary[summary["topic_id"] == tid]["label"].iloc[0],
+            "topic_id": row["topic_id"],
+            "label": row["label"],
             "n_risk": n_risk,
             "gap_eur": cluster_gap,
             "gap_meur": cluster_gap / 1e6,
@@ -708,11 +816,16 @@ def compute_funding_gap(df, summary, total_gva):
 
     gap_df = pd.DataFrame(gap_rows).sort_values("gap_eur", ascending=False)
 
-    print("\n  Funding gap by cluster:")
+    print("\n  Funding gap by risk cluster:")
     for _, row in gap_df.iterrows():
-        if row["n_risk"] > 0:
-            print(f"    Topic {row['topic_id']} [{row['label']}]: "
-                  f"{row['n_risk']} pkgs, EUR {row['gap_meur']:.1f}M")
+        print(f"    Risk Topic {int(row['topic_id'])} [{row['label']}]: "
+              f"{row['n_risk']} pkgs, EUR {row['gap_meur']:.1f}M")
+
+    assert sum(r["n_risk"] for r in gap_rows) == total_risk, (
+        f"Per-cluster package count ({sum(r['n_risk'] for r in gap_rows)}) "
+        f"does not match risk-universe size ({total_risk}). "
+        f"Check for unassigned topic_id_risk in risk universe."
+    )
 
     return gap_df, total_gap
 
@@ -773,31 +886,31 @@ def bootstrap_analysis(df):
 
 # ── Stage 8: Figures ───────────────────────────────────────────────────
 
-def make_figures(df, summary, gap_df, boot_df, topic_labels):
+def make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels):
     """Generate all figures for the report."""
     print("\n" + "=" * 70)
     print("STAGE 8: Generating figures")
     print("=" * 70)
 
-    # ── Figure 1: Criticality vs Fragility scatter, coloured by topic ──
+    # ── Figure 1: C–F scatter — grey background, risk points by risk cluster ──
     fig, ax = plt.subplots(figsize=(10, 7))
-    topics = sorted(df["topic_id"].unique())
-    cmap = plt.colormaps.get_cmap("tab20b").resampled(N_TOPICS)
 
-    for tid in topics:
-        mask = (df["topic_id"] == tid) & (~df["in_risk_universe"])
-        ax.scatter(df.loc[mask, "criticality"], df.loc[mask, "fragility"],
-                   c=[cmap(tid)], alpha=0.15, s=8, label=None)
+    # Background: all 9,461 packages in grey (no cluster colouring)
+    ax.scatter(df["criticality"], df["fragility"],
+               c="lightgrey", alpha=0.12, s=6, linewidths=0, zorder=1)
 
-    # Overlay risk universe with larger markers
-    risk = df[df["in_risk_universe"]]
-    for tid in topics:
-        mask = risk["topic_id"] == tid
-        if mask.sum() > 0:
-            short_label = topic_labels[tid].split(",")[0].strip()
-            ax.scatter(risk.loc[mask, "criticality"], risk.loc[mask, "fragility"],
-                       c=[cmap(tid)], alpha=0.8, s=30, edgecolors="black",
-                       linewidths=0.5, label=f"{short_label} ({mask.sum()})")
+    # Risk universe: coloured by risk-only cluster
+    risk = df[df["in_risk_universe"]].copy()
+    n_risk_topics = int(risk["topic_id_risk"].dropna().nunique())
+    cmap_risk = plt.colormaps.get_cmap("tab10").resampled(max(n_risk_topics, 1))
+
+    for tid in sorted(risk["topic_id_risk"].dropna().unique()):
+        mask = risk["topic_id_risk"] == tid
+        short_label = str(risk_topic_labels[int(tid)]).split(",")[0].strip()
+        ax.scatter(risk.loc[mask, "criticality"], risk.loc[mask, "fragility"],
+                   c=[cmap_risk(int(tid))], alpha=0.85, s=35,
+                   edgecolors="black", linewidths=0.5, zorder=2,
+                   label=f"{short_label} ({mask.sum()})")
 
     c_thresh = df["criticality"].quantile(RISK_PERCENTILE / 100)
     f_thresh = df["fragility"].quantile(RISK_PERCENTILE / 100)
@@ -805,58 +918,64 @@ def make_figures(df, summary, gap_df, boot_df, topic_labels):
     ax.axhline(f_thresh, color="grey", linestyle="--", alpha=0.5)
     ax.set_xlabel("Criticality score (min-max normalised, [0,1])", fontsize=11)
     ax.set_ylabel("Fragility score (min-max normalised, [0,1])", fontsize=11)
-    ax.set_title("Criticality vs Fragility by Functional Cluster", fontsize=13)
-    n_risk = int(df["in_risk_universe"].sum())
+    ax.set_title("Criticality vs Fragility — Risk Universe by Risk Cluster", fontsize=13)
+    n_risk_count = int(df["in_risk_universe"].sum())
     fig.text(0.5, -0.02,
              f"N={len(df):,} load-bearing packages (≥100 dependent projects). "
-             f"Dashed grey lines mark the {RISK_PERCENTILE}th-percentile thresholds "
-             f"(C≥{c_thresh:.3f}, F≥{f_thresh:.3f}). "
-             f"Risk universe = {n_risk} packages above both thresholds, shown with "
-             f"larger markers and black edges. Background points faded for legibility.",
+             f"Grey background = all {len(df):,} packages (no cluster colouring). "
+             f"Coloured points = {n_risk_count} risk-universe packages above both "
+             f"{RISK_PERCENTILE}th-percentile thresholds (C≥{c_thresh:.3f}, F≥{f_thresh:.3f}), "
+             f"coloured by risk-only NMF cluster (k={N_RISK_TOPICS}).",
              ha="center", fontsize=8, style="italic", wrap=True)
-    ax.legend(title="Risk universe by cluster", fontsize=7, title_fontsize=8,
-              loc="lower left", ncol=3)
+    ax.legend(title="Risk cluster (risk-only NMF)", fontsize=8, title_fontsize=9,
+              loc="lower left", ncol=2)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "fig1_scatter.png"),
                 dpi=150, bbox_inches="tight")
     plt.close(fig)
     print("  Saved fig1_scatter.png")
 
-    # ── Figure 2: Cluster fragility comparison ──
+    # ── Figure 2: Risk cluster fragility (a) and funding gap (b) ──
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
-    # Panel a: Mean fragility by cluster
-    s = summary.sort_values("mean_fragility", ascending=True)
-    short_labels = [l.split(",")[0].strip() for l in s["label"]]
-    colors = [cmap(tid) for tid in s["topic_id"]]
+    n_rc = len(summary)
+    cmap_rc = plt.colormaps.get_cmap("tab10").resampled(max(n_rc, 1))
 
-    axes[0].barh(range(len(s)), s["mean_fragility"], color=colors)
-    axes[0].set_yticks(range(len(s)))
-    axes[0].set_yticklabels(short_labels, fontsize=8)
+    # Panel a: Mean fragility by risk cluster
+    s = summary.sort_values("mean_fragility", ascending=True)
+    short_labels_a = [str(l).split(",")[0].strip() for l in s["label"]]
+    colors_a = [cmap_rc(int(tid)) for tid in s["topic_id"]]
+
+    axes[0].barh(range(n_rc), s["mean_fragility"], color=colors_a)
+    axes[0].set_yticks(range(n_rc))
+    axes[0].set_yticklabels(short_labels_a, fontsize=9)
     axes[0].set_xlabel("Mean fragility score (min-max normalised, [0,1])")
-    axes[0].set_title("(a) Mean fragility by cluster")
-    axes[0].axvline(df["fragility"].mean(), color="red", linestyle="--",
-                    alpha=0.7, label=f"Overall mean (F̄={df['fragility'].mean():.3f})")
+    axes[0].set_title("(a) Mean fragility by risk cluster")
+    risk_mean_f = df[df["in_risk_universe"]]["fragility"].mean()
+    axes[0].axvline(risk_mean_f, color="red", linestyle="--",
+                    alpha=0.7, label=f"Risk-universe mean (F̄={risk_mean_f:.3f})")
     axes[0].legend(fontsize=8)
 
-    # Panel b: Risk universe share by cluster
-    s2 = summary.sort_values("risk_pct", ascending=True)
-    short_labels2 = [l.split(",")[0].strip() for l in s2["label"]]
-    colors2 = [cmap(tid) for tid in s2["topic_id"]]
+    # Panel b: Funding gap by risk cluster
+    gap_sorted = gap_df.sort_values("gap_meur", ascending=True)
+    short_labels_b = [str(l).split(",")[0].strip() for l in gap_sorted["label"]]
+    colors_b = [cmap_rc(int(tid)) for tid in gap_sorted["topic_id"]]
 
-    axes[1].barh(range(len(s2)), s2["risk_pct"], color=colors2)
-    axes[1].set_yticks(range(len(s2)))
-    axes[1].set_yticklabels(short_labels2, fontsize=8)
-    axes[1].set_xlabel("% of cluster in risk universe")
-    axes[1].set_title("(b) Risk concentration by cluster")
+    axes[1].barh(range(len(gap_sorted)), gap_sorted["gap_meur"], color=colors_b)
+    axes[1].set_yticks(range(len(gap_sorted)))
+    axes[1].set_yticklabels(short_labels_b, fontsize=9)
+    axes[1].set_xlabel("Funding gap (EUR million/year)")
+    axes[1].set_title("(b) Funding gap by risk cluster")
 
-    n_risk = int(df["in_risk_universe"].sum())
+    n_risk_total = int(df["in_risk_universe"].sum())
+    total_gap_meur = n_risk_total * FTES_PER_PACKAGE * EU_MEDIAN_DEV_SALARY / 1e6
     fig.text(0.5, -0.03,
-             f"N={len(df):,} load-bearing packages assigned to {N_TOPICS} NMF clusters. "
-             f"Risk universe = {n_risk} packages above the {RISK_PERCENTILE}th percentile "
-             f"on both criticality and fragility. Cluster labels are human-assigned "
-             f"after inspecting top NMF keywords and member packages; Topics 0 and 24 are "
-             f"residual clusters of generic-description packages (see PROJECT_OVERVIEW §11).",
+             f"N={n_risk_total} risk-universe packages assigned to {N_RISK_TOPICS} "
+             f"risk-only NMF clusters. "
+             f"Panel (a): mean fragility within each cluster. "
+             f"Panel (b): gross funding-gap lower bound (2 FTE × EUR 45k/pkg/yr); "
+             f"total = EUR {total_gap_meur:.1f}M. "
+             f"Cluster labels are human-assigned after inspecting NMF auto-keywords.",
              ha="center", fontsize=8, style="italic", wrap=True)
     plt.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "fig2_clusters.png"),
@@ -912,7 +1031,8 @@ def save_outputs(df, summary, gap_df):
         "dep_pkg_count", "dep_repo_count", "contributors",
         "open_issues", "stars", "days_since_release",
         "criticality", "fragility", "in_risk_universe",
-        "topic_id", "topic_label",
+        "topic_id_corpus", "topic_label_corpus",
+        "topic_id_risk", "topic_label_risk",
     ]
     out_path = os.path.join(OUTPUT_DIR, "packages_scored.csv")
     df[out_cols].to_csv(out_path, index=False)
@@ -922,6 +1042,11 @@ def save_outputs(df, summary, gap_df):
     sum_path = os.path.join(OUTPUT_DIR, "cluster_summary.csv")
     summary.to_csv(sum_path, index=False)
     print(f"  Saved {sum_path}")
+
+    # Risk cluster summary (primary findings)
+    risk_sum_path = os.path.join(OUTPUT_DIR, "risk_cluster_summary.csv")
+    summary.to_csv(risk_sum_path, index=False)
+    print(f"  Saved {risk_sum_path}")
 
     # Funding gap
     gap_path = os.path.join(OUTPUT_DIR, "funding_gap_by_cluster.csv")
@@ -937,14 +1062,15 @@ def main():
     check_cf_correlation(df)
     tfidf_matrix, tfidf = select_topic_count(df)
     df, topic_labels = topic_model(df, tfidf_matrix, tfidf)
-    summary = analyse_clusters(df, topic_labels)
-    inspect_top_cluster(df, summary, topic_labels)
+    df, risk_topic_labels = topic_model_risk(df)
+    summary = analyse_clusters(df, risk_topic_labels)
+    inspect_top_cluster(df, summary, risk_topic_labels)
     lasso_coefs = lasso_validation(df)
     threshold_results = threshold_sensitivity(df, topic_labels)
     gva, total_gva = fetch_eurostat_gva()
     gap_df, total_gap = compute_funding_gap(df, summary, total_gva)
     boot_df = bootstrap_analysis(df)
-    make_figures(df, summary, gap_df, boot_df, topic_labels)
+    make_figures(df, summary, gap_df, boot_df, topic_labels, risk_topic_labels)
     save_outputs(df, summary, gap_df)
 
     print("\n" + "=" * 70)
