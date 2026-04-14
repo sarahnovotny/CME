@@ -71,31 +71,60 @@ def download_tarball(force: bool) -> None:
         print("[zenodo] --force: removing existing tarball")
         os.remove(TARBALL_PATH)
 
-    if os.path.exists(TARBALL_PATH):
-        size = os.path.getsize(TARBALL_PATH)
-        if size == ZENODO_SIZE:
-            print(f"[zenodo] Tarball already present ({human(size)}), skipping download")
-            return
-        print(f"[zenodo] Partial tarball on disk: {human(size)} / {human(ZENODO_SIZE)}; resuming")
-        start_byte = size
-    else:
-        start_byte = 0
+    # Zenodo often takes 1–5 min to begin streaming a 25 GB file and may drop
+    # long-running connections. Retry on timeouts/connection errors; the Range
+    # header on subsequent attempts resumes from the current on-disk size.
+    # timeout = (connect_timeout, read_timeout) per requests docs.
+    CONNECT_TIMEOUT = 60
+    READ_TIMEOUT = 300
+    MAX_ATTEMPTS = 5
 
-    headers = {"Range": f"bytes={start_byte}-"} if start_byte else {}
-    print(f"[zenodo] GET {ZENODO_URL}")
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        if os.path.exists(TARBALL_PATH):
+            size = os.path.getsize(TARBALL_PATH)
+            if size == ZENODO_SIZE:
+                print(f"[zenodo] Tarball already present ({human(size)}), skipping download")
+                break
+            start_byte = size
+            if attempt == 1:
+                print(f"[zenodo] Partial tarball on disk: "
+                      f"{human(size)} / {human(ZENODO_SIZE)}; resuming")
+        else:
+            start_byte = 0
 
-    with requests.get(ZENODO_URL, stream=True, headers=headers, timeout=60) as r:
-        r.raise_for_status()
-        mode = "ab" if start_byte else "wb"
-        with open(TARBALL_PATH, mode) as f, tqdm(
-            total=ZENODO_SIZE, initial=start_byte, unit="B", unit_scale=True,
-            unit_divisor=1024, desc="[zenodo] download", mininterval=1.0,
-        ) as bar:
-            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                if not chunk:
-                    continue
-                f.write(chunk)
-                bar.update(len(chunk))
+        headers = {"Range": f"bytes={start_byte}-"} if start_byte else {}
+        print(f"[zenodo] GET {ZENODO_URL}"
+              + (f" (attempt {attempt}/{MAX_ATTEMPTS})" if attempt > 1 else ""))
+
+        try:
+            with requests.get(
+                ZENODO_URL, stream=True, headers=headers,
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            ) as r:
+                r.raise_for_status()
+                mode = "ab" if start_byte else "wb"
+                with open(TARBALL_PATH, mode) as f, tqdm(
+                    total=ZENODO_SIZE, initial=start_byte, unit="B",
+                    unit_scale=True, unit_divisor=1024,
+                    desc="[zenodo] download", mininterval=1.0,
+                ) as bar:
+                    for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        bar.update(len(chunk))
+            break  # finished without exception
+        except (requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ChunkedEncodingError) as e:
+            if attempt == MAX_ATTEMPTS:
+                sys.exit(f"ERROR: download failed after {MAX_ATTEMPTS} attempts: {e}")
+            wait = min(2 ** attempt, 60)
+            print(f"[zenodo] transfer interrupted ({type(e).__name__}); "
+                  f"retrying in {wait}s (resume from "
+                  f"{human(os.path.getsize(TARBALL_PATH) if os.path.exists(TARBALL_PATH) else 0)})")
+            import time
+            time.sleep(wait)
 
     size = os.path.getsize(TARBALL_PATH)
     if size != ZENODO_SIZE:
