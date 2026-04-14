@@ -163,33 +163,31 @@ def extract_target_csv(force: bool) -> None:
     # the ~134 GB of files preprocess.py does not read. Progress tracks
     # compressed bytes read from disk (which is why the bar may finish early
     # when we find the target before the end of the archive).
-    with open(TARBALL_PATH, "rb") as raw:
-        wrapped = tqdm.wrapattr(
-            raw, "read", total=tar_size, unit="B", unit_scale=True,
-            unit_divisor=1024, desc="[extract] scan", mininterval=1.0,
-        )
-        with tarfile.open(fileobj=wrapped, mode="r|gz") as tar:
-            for member in tar:
-                if member.isfile() and os.path.basename(member.name) == TARGET_CSV_NAME:
-                    wrapped.write(f"\n[extract] Found {member.name} "
-                                  f"({human(member.size)}); writing\n")
-                    src = tar.extractfile(member)
-                    if src is None:
-                        sys.exit(f"ERROR: could not open {member.name} inside tarball")
-                    with open(TARGET_CSV_PATH, "wb") as dst, tqdm(
-                        total=member.size, unit="B", unit_scale=True,
-                        unit_divisor=1024, desc="[extract] write",
-                        mininterval=1.0,
-                    ) as wbar:
-                        while True:
-                            chunk = src.read(CHUNK_SIZE)
-                            if not chunk:
-                                break
-                            dst.write(chunk)
-                            wbar.update(len(chunk))
-                    print(f"[extract] Wrote {TARGET_CSV_PATH} "
-                          f"({human(os.path.getsize(TARGET_CSV_PATH))})")
-                    return
+    with open(TARBALL_PATH, "rb") as raw, tqdm.wrapattr(
+        raw, "read", total=tar_size, unit="B", unit_scale=True,
+        unit_divisor=1024, desc="[extract] scan", mininterval=1.0,
+    ) as wrapped, tarfile.open(fileobj=wrapped, mode="r|gz") as tar:
+        for member in tar:
+            if member.isfile() and os.path.basename(member.name) == TARGET_CSV_NAME:
+                tqdm.write(f"[extract] Found {member.name} "
+                           f"({human(member.size)}); writing")
+                src = tar.extractfile(member)
+                if src is None:
+                    sys.exit(f"ERROR: could not open {member.name} inside tarball")
+                with open(TARGET_CSV_PATH, "wb") as dst, tqdm(
+                    total=member.size, unit="B", unit_scale=True,
+                    unit_divisor=1024, desc="[extract] write",
+                    mininterval=1.0,
+                ) as wbar:
+                    while True:
+                        chunk = src.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+                        wbar.update(len(chunk))
+                tqdm.write(f"[extract] Wrote {TARGET_CSV_PATH} "
+                           f"({human(os.path.getsize(TARGET_CSV_PATH))})")
+                return
     sys.exit(f"ERROR: {TARGET_CSV_NAME} not found in tarball")
 
 
