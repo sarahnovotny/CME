@@ -43,8 +43,8 @@ EUROSTAT_OUT = os.path.join(DATA_DIR, "eurostat_gva_2022.csv")
 
 # ── Zenodo record 3626071, Libraries.io v1.6.0 (Katz, 2020) ────────────
 ZENODO_URL = (
-    "https://zenodo.org/api/records/3626071/files/"
-    "libraries-1.6.0-2020-01-12.tar.gz/content"
+    "https://zenodo.org/records/3626071/files/"
+    "libraries-1.6.0-2020-01-12.tar.gz"
 )
 ZENODO_SIZE = 24_890_021_718
 ZENODO_MD5 = "4f2275284b86827751bb31ce74238b15"
