@@ -774,7 +774,7 @@ def fetch_eurostat_gva():
 
     if not os.path.exists(EUROSTAT_FILE):
         raise FileNotFoundError(
-            f"{EUROSTAT_FILE} not found. Run `python preprocess.py` first.")
+            f"{EUROSTAT_FILE} not found. Run `python fetch_data.py` first.")
 
     gva = pd.read_csv(EUROSTAT_FILE)
     total_gva = gva["gva_meur"].sum()

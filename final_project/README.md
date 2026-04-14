@@ -10,12 +10,13 @@ final_project/
 ├── requirements.txt           pinned Python dependencies
 ├── proposal.md                original project proposal (+ change log)
 ├── PROJECT_OVERVIEW.md        operational decisions log (companion to the report)
-├── preprocess.py              raw_data/ → data/   (run once)
+├── fetch_data.py              Zenodo + DBnomics → raw_data/ + data/ (run once, network)
+├── preprocess.py              raw_data/ → data/   (run once, local)
 ├── analysis.py                data/ → outputs/    (script form, end-to-end)
 ├── analysis.ipynb             data/ → outputs/    (notebook form, identical logic)
 ├── raw_data/
-│   ├── README.md              how to obtain the inputs
-│   ├── libraries-1.6.0-…/     symlink to the 159 GB Libraries.io snapshot
+│   ├── README.md              provenance + manual-download fallback
+│   ├── libraries-1.6.0-…/     staged by fetch_data.py (~25 GB CSV, one file)
 │   └── CNECT_OpenSourceStudy…pdf  EU Commission OSS study (reference)
 ├── data/                      analysis-ready CSVs (built by preprocess.py)
 │   ├── packages_loadbearing.csv      9,461 rows × 12 cols
@@ -39,14 +40,20 @@ final_project/
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Obtain the raw Libraries.io snapshot (see raw_data/README.md) and
-#    place it (or a symlink to it) at raw_data/libraries-1.6.0-2020-01-12/
+# 2. Download raw inputs. This is the only step that hits the network.
+#    Pulls the Libraries.io v1.6.0 tarball from Zenodo (~25 GB, MD5-verified,
+#    resume-aware) and stream-extracts ONLY the one CSV preprocess.py needs
+#    (134 GB of other tarball members skipped). Also fetches Eurostat J62/J63
+#    GVA via DBnomics.
+python fetch_data.py
+#    → writes raw_data/libraries-1.6.0-2020-01-12/projects_with_repository_fields-*.csv (~25 GB)
+#    → writes data/eurostat_gva_2022.csv
+#    → deletes the 25 GB tarball after extraction (use --keep-tarball to retain)
 
-# 3. Build the analysis-ready CSVs. This is the only step that touches
-#    the 25 GB raw CSV and the only step that calls a remote API.
+# 3. Build the analysis-ready package CSV from the raw Libraries.io slice.
+#    Pure-local, no network.
 python preprocess.py
 #    → writes data/packages_loadbearing.csv  (~5 min)
-#    → writes data/eurostat_gva_2022.csv     (cached after first run)
 
 # 4. Reproduce all results, tables, and figures.
 python analysis.py

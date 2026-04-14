@@ -8,7 +8,8 @@ scikit-learn==1.8.0
 matplotlib==3.10.8
 seaborn==0.13.2
 
-# Live API client used only by preprocess.py (cached afterwards).
+# Network clients used only by fetch_data.py (outputs cached afterwards).
+requests==2.32.5
 dbnomics==1.2.7
 
 # Notebook execution.

@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
 """
-preprocess.py — Build analysis-ready datasets from raw sources.
+preprocess.py — Build analysis-ready datasets from staged raw sources.
 
 Reads:
   raw_data/libraries-1.6.0-2020-01-12/projects_with_repository_fields-*.csv
-  Eurostat nama_10_a64 (live fetch via DBnomics on first run)
+    (staged by fetch_data.py from the Zenodo snapshot)
 
 Writes:
-  data/packages_loadbearing.csv   — filtered, column-renamed Libraries.io slice
-                                    (target ecosystems × >=100 dependent projects)
-  data/eurostat_gva_2022.csv      — country-level J62/J63 GVA (cached)
+  data/packages_loadbearing.csv — filtered, column-renamed Libraries.io slice
+                                  (target ecosystems × >=100 dependent projects)
 
-This script is the only place where the raw 25 GB Libraries.io CSV and the live
-Eurostat API are touched. Once it has run, the analysis notebook / script can be
-re-executed end-to-end against the small CSVs in data/ with no network access
-and no dependence on the raw tarball.
+This script is the only place where the raw 25 GB Libraries.io CSV is touched.
+Once it has run, analysis.py can be re-executed end-to-end against the small
+CSVs in data/ with no network access and no dependence on the raw tarball.
+
+The Eurostat GVA cache (data/eurostat_gva_2022.csv) is produced separately by
+fetch_data.py — preprocess.py is pure-local and does no network I/O.
 
 Run:
-  python preprocess.py                 # uses cached Eurostat if available
-  python preprocess.py --refresh-gva   # forces a re-fetch of Eurostat
+  python preprocess.py
 """
 
 import argparse
@@ -35,21 +35,18 @@ PROJECTS_FILE = os.path.join(
     RAW_DIR, "projects_with_repository_fields-1.6.0-2020-01-12.csv")
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 PACKAGES_OUT = os.path.join(DATA_DIR, "packages_loadbearing.csv")
-EUROSTAT_OUT = os.path.join(DATA_DIR, "eurostat_gva_2022.csv")
 
 # ── Filter parameters (must match analysis.py) ─────────────────────────
 TARGET_PLATFORMS = ["NPM", "Maven", "Pypi", "Rubygems", "NuGet", "Packagist", "Cargo"]
 LOAD_BEARING_THRESHOLD = 100
-EUROSTAT_YEAR = 2022
-EUROSTAT_AGGREGATES = ["EU27_2020", "EU28", "EA19", "EA20", "EU15"]
 
 
 def build_packages_csv():
     """Filter the raw Libraries.io snapshot down to load-bearing packages."""
     print(f"[packages] Reading {PROJECTS_FILE}")
     if not os.path.exists(PROJECTS_FILE):
-        sys.exit(f"ERROR: raw input not found.\n"
-                 f"See raw_data/README.md for download instructions.")
+        sys.exit(f"ERROR: raw input not found at {PROJECTS_FILE}.\n"
+                 f"Run `python fetch_data.py` first (see raw_data/README.md).")
 
     # The CSV has 59 header columns but 60 data columns (trailing comma).
     # Read header separately and append a dummy column name so pandas doesn't
@@ -104,49 +101,10 @@ def build_packages_csv():
     print(f"[packages] Wrote {PACKAGES_OUT} ({len(df):,} rows, {size_mb:.1f} MB)")
 
 
-def build_eurostat_csv(refresh: bool):
-    """Fetch (or load cached) Eurostat J62/J63 GVA for EUROSTAT_YEAR."""
-    if os.path.exists(EUROSTAT_OUT) and not refresh:
-        print(f"[eurostat] Cache exists at {EUROSTAT_OUT} — skipping fetch "
-              f"(use --refresh-gva to re-download)")
-        return
-
-    print(f"[eurostat] Fetching nama_10_a64 (J62_J63, B1G, CP_MEUR) via DBnomics")
-    try:
-        from dbnomics import fetch_series
-    except ImportError:
-        sys.exit("ERROR: dbnomics not installed. Run: pip install -r requirements.txt")
-
-    series = fetch_series(
-        provider_code="Eurostat",
-        dataset_code="nama_10_a64",
-        dimensions={"na_item": ["B1G"], "unit": ["CP_MEUR"], "nace_r2": ["J62_J63"]},
-        max_nb_series=200,
-    )
-
-    series["year"] = series["period"].dt.year
-    gva = (series[series["year"] == EUROSTAT_YEAR][["geo", "value"]]
-           .dropna()
-           .rename(columns={"geo": "country", "value": "gva_meur"}))
-    gva = gva[~gva["country"].isin(EUROSTAT_AGGREGATES)].reset_index(drop=True)
-
-    os.makedirs(DATA_DIR, exist_ok=True)
-    gva.to_csv(EUROSTAT_OUT, index=False)
-    print(f"[eurostat] Wrote {EUROSTAT_OUT} ({len(gva)} countries, "
-          f"total = EUR {gva['gva_meur'].sum():,.0f}M)")
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("--refresh-gva", action="store_true",
-                    help="Force re-fetch of Eurostat data even if cached.")
-    ap.add_argument("--skip-packages", action="store_true",
-                    help="Skip Libraries.io rebuild (useful when only refreshing GVA).")
-    args = ap.parse_args()
-
-    if not args.skip_packages:
-        build_packages_csv()
-    build_eurostat_csv(refresh=args.refresh_gva)
+    ap.parse_args()
+    build_packages_csv()
     print("[done] Preprocessing complete.")
 
 
