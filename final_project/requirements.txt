@@ -11,6 +11,7 @@ seaborn==0.13.2
 # Network clients used only by fetch_data.py (outputs cached afterwards).
 requests==2.32.5
 dbnomics==1.2.7
+tqdm==4.67.3
 
 # Notebook execution.
 jupyter==1.1.1

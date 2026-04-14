@@ -28,6 +28,7 @@ import sys
 import tarfile
 
 import requests
+from tqdm import tqdm
 
 # ── Paths ──────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,29 +87,29 @@ def download_tarball(force: bool) -> None:
     with requests.get(ZENODO_URL, stream=True, headers=headers, timeout=60) as r:
         r.raise_for_status()
         mode = "ab" if start_byte else "wb"
-        downloaded = start_byte
-        last_report = start_byte
-        with open(TARBALL_PATH, mode) as f:
+        with open(TARBALL_PATH, mode) as f, tqdm(
+            total=ZENODO_SIZE, initial=start_byte, unit="B", unit_scale=True,
+            unit_divisor=1024, desc="[zenodo] download", mininterval=1.0,
+        ) as bar:
             for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
                 if not chunk:
                     continue
                 f.write(chunk)
-                downloaded += len(chunk)
-                if downloaded - last_report >= 500 * 1024 * 1024:  # every 500 MB
-                    pct = downloaded / ZENODO_SIZE * 100
-                    print(f"[zenodo] {human(downloaded)} / {human(ZENODO_SIZE)} ({pct:.1f}%)")
-                    last_report = downloaded
+                bar.update(len(chunk))
 
     size = os.path.getsize(TARBALL_PATH)
     if size != ZENODO_SIZE:
         sys.exit(f"ERROR: downloaded size {size:,} != expected {ZENODO_SIZE:,}. "
                  f"Re-run (the script will resume) or pass --force.")
 
-    print("[zenodo] Verifying MD5 (this takes a few minutes for 25 GB)...")
     md5 = hashlib.md5()
-    with open(TARBALL_PATH, "rb") as f:
+    with open(TARBALL_PATH, "rb") as f, tqdm(
+        total=size, unit="B", unit_scale=True, unit_divisor=1024,
+        desc="[zenodo] MD5 verify", mininterval=1.0,
+    ) as bar:
         for chunk in iter(lambda: f.read(CHUNK_SIZE), b""):
             md5.update(chunk)
+            bar.update(len(chunk))
     actual = md5.hexdigest()
     if actual != ZENODO_MD5:
         sys.exit(f"ERROR: MD5 mismatch (got {actual}, expected {ZENODO_MD5}). "
@@ -127,26 +128,39 @@ def extract_target_csv(force: bool) -> None:
                  f"Run without --skip-zenodo or remove --skip-zenodo to download it.")
 
     os.makedirs(LIBRARIES_DIR, exist_ok=True)
+    tar_size = os.path.getsize(TARBALL_PATH)
     print(f"[extract] Streaming tarball to locate {TARGET_CSV_NAME}...")
     # Streaming mode cannot seek, but walking members in order lets us skip
-    # the ~134 GB of files preprocess.py does not read.
-    with tarfile.open(TARBALL_PATH, mode="r|gz") as tar:
-        for member in tar:
-            if member.isfile() and os.path.basename(member.name) == TARGET_CSV_NAME:
-                print(f"[extract] Found {member.name} ({human(member.size)}); writing")
-                src = tar.extractfile(member)
-                if src is None:
-                    sys.exit(f"ERROR: could not open {member.name} inside tarball")
-                bytes_out = 0
-                with open(TARGET_CSV_PATH, "wb") as dst:
-                    while True:
-                        chunk = src.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        dst.write(chunk)
-                        bytes_out += len(chunk)
-                print(f"[extract] Wrote {TARGET_CSV_PATH} ({human(bytes_out)})")
-                return
+    # the ~134 GB of files preprocess.py does not read. Progress tracks
+    # compressed bytes read from disk (which is why the bar may finish early
+    # when we find the target before the end of the archive).
+    with open(TARBALL_PATH, "rb") as raw:
+        wrapped = tqdm.wrapattr(
+            raw, "read", total=tar_size, unit="B", unit_scale=True,
+            unit_divisor=1024, desc="[extract] scan", mininterval=1.0,
+        )
+        with tarfile.open(fileobj=wrapped, mode="r|gz") as tar:
+            for member in tar:
+                if member.isfile() and os.path.basename(member.name) == TARGET_CSV_NAME:
+                    wrapped.write(f"\n[extract] Found {member.name} "
+                                  f"({human(member.size)}); writing\n")
+                    src = tar.extractfile(member)
+                    if src is None:
+                        sys.exit(f"ERROR: could not open {member.name} inside tarball")
+                    with open(TARGET_CSV_PATH, "wb") as dst, tqdm(
+                        total=member.size, unit="B", unit_scale=True,
+                        unit_divisor=1024, desc="[extract] write",
+                        mininterval=1.0,
+                    ) as wbar:
+                        while True:
+                            chunk = src.read(CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            dst.write(chunk)
+                            wbar.update(len(chunk))
+                    print(f"[extract] Wrote {TARGET_CSV_PATH} "
+                          f"({human(os.path.getsize(TARGET_CSV_PATH))})")
+                    return
     sys.exit(f"ERROR: {TARGET_CSV_NAME} not found in tarball")
 
 
